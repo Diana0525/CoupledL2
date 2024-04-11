@@ -60,6 +60,8 @@ class PrefetchTrain(implicit p: Parameters) extends PrefetchBundle {
   val reqsource = UInt(MemReqSource.reqSourceBits.W)
 
   def addr: UInt = Cat(tag, set, 0.U(offsetBits.W))
+
+  val pfdata = UInt((blockBytes * 8).W)
 }
 
 class PrefetchIO(implicit p: Parameters) extends PrefetchBundle {
