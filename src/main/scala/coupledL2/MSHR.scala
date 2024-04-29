@@ -125,7 +125,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
     oa.off := req.off
     oa.source := io.id
     oa.opcode := Mux(
-      req_acquirePerm,
+      req_acquirePerm && dirResult.hit,
       req.opcode,
       // Get or AcquireBlock
       AcquireBlock
@@ -165,7 +165,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_release.set := req.set
     mp_release.off := 0.U
     mp_release.alias.foreach(_ := 0.U)
-    mp_release.vaddr.foreach(_ := 0.U)
+    mp_release.vaddr.foreach(_ := req.vaddr.getOrElse(0.U))
     mp_release.isKeyword.foreach(_ := false.B)
     // if dirty, we must ReleaseData
     // if accessed, we ReleaseData to keep the data in L3, for future access to be faster
@@ -212,7 +212,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_probeack.set := req.set
     mp_probeack.off := req.off
     mp_probeack.alias.foreach(_ := 0.U)
-    mp_probeack.vaddr.foreach(_ := 0.U)
+    mp_probeack.vaddr.foreach(_ := req.vaddr.getOrElse(0.U))
     mp_probeack.isKeyword.foreach(_ := false.B)
     mp_probeack.opcode := Mux(
       meta.dirty && isT(meta.state) || probeDirty || req.needProbeAckData,
@@ -281,7 +281,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_grant.off := req.off
     mp_grant.sourceId := req.sourceId
     mp_grant.alias.foreach(_ := 0.U)
-    mp_grant.vaddr.foreach(_ := 0.U)
+    mp_grant.vaddr.foreach(_ := req.vaddr.getOrElse(0.U))
     mp_grant.isKeyword.foreach(_ := req.isKeyword.getOrElse(false.B))
     mp_grant.opcode := odOpGen(req.opcode)
     mp_grant.param := Mux(
@@ -289,7 +289,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
       0.U, // Get -> AccessAckData
       MuxLookup( // Acquire -> Grant
         req.param,
-        req.param,
+        req.param)(
         Seq(
           NtoB -> Mux(req_promoteT, toT, toB),
           BtoT -> toT,
@@ -366,7 +366,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_grant.aMergeTask.opcode := odOpGen(merge_task.opcode)
     mp_grant.aMergeTask.param := MuxLookup( // Acquire -> Grant
       merge_task.param,
-      merge_task.param,
+      merge_task.param)(
       Seq(
         NtoB -> Mux(req_promoteT, toT, toB),
         BtoT -> toT,
@@ -548,6 +548,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
   io.msInfo.bits.s_refill := state.s_refill
   io.msInfo.bits.param := req.param
   io.msInfo.bits.mergeA := mergeA
+  io.msInfo.bits.w_releaseack := state.w_releaseack
 
   assert(!(c_resp.valid && !io.status.bits.w_c_resp))
   assert(!(d_resp.valid && !io.status.bits.w_d_resp))
