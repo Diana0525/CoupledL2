@@ -31,14 +31,18 @@ class PrefetchReq(implicit p: Parameters) extends PrefetchBundle {
   val needT = Bool()
   val source = UInt(sourceIdBits.W)
   val pfSource = UInt(MemReqSource.reqSourceBits.W)
+  val restartBit = Bool()// TODO: transfer to block prefetched
+  val pfDepth = UInt(2.W)
 
   def isBOP:Bool = pfSource === MemReqSource.Prefetch2L2BOP.id.U
   def isSMS:Bool = pfSource === MemReqSource.Prefetch2L2SMS.id.U
   def isTP:Bool = pfSource === MemReqSource.Prefetch2L2TP.id.U
+  def isACDP:Bool = pfSource === MemReqSource.Prefetch2L2ACDP.id.U
   def fromL2:Bool =
     pfSource === MemReqSource.Prefetch2L2BOP.id.U ||
     pfSource === MemReqSource.Prefetch2L2SMS.id.U ||
-    pfSource === MemReqSource.Prefetch2L2TP.id.U
+    pfSource === MemReqSource.Prefetch2L2TP.id.U  ||
+    pfSource === MemReqSource.Prefetch2L2ACDP.id.U
 }
 
 class PrefetchResp(implicit p: Parameters) extends PrefetchBundle {
@@ -58,10 +62,12 @@ class PrefetchTrain(implicit p: Parameters) extends PrefetchBundle {
   val prefetched = Bool()
   val pfsource = UInt(PfSource.pfSourceBits.W)
   val reqsource = UInt(MemReqSource.reqSourceBits.W)
+  val pfdata = UInt((blockBytes * 8).W)
+  val restartBit = Bool()
+  val pfDepth = UInt(2.W)
+  val isContinuation = Bool()
 
   def addr: UInt = Cat(tag, set, 0.U(offsetBits.W))
-
-  val pfdata = UInt((blockBytes * 8).W)
 }
 
 class PrefetchIO(implicit p: Parameters) extends PrefetchBundle {

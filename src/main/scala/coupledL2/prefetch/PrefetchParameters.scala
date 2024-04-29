@@ -43,7 +43,8 @@ object PfSource extends Enumeration {
   val Stream  = Value("Stream")
   val Stride  = Value("Stride")
   val TP      = Value("TP")
-
+  val ACDP    = Value("ACDP")
+  
   val PfSourceCount = Value("PfSourceCount")
   val pfSourceBits = log2Ceil(PfSourceCount.id)
 

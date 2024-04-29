@@ -104,6 +104,9 @@ class TaskBundle(implicit p: Parameters) extends L2Bundle with HasChannelBits {
   // for merged MSHR tasks(Acquire & late Prefetch)
   val mergeA = Bool()
   val aMergeTask = new MergeTaskBundle()
+
+  val prefetchDepth = UInt(2.W)
+  val restartBit = Bool()
 }
 
 class PipeStatus(implicit p: Parameters) extends L2Bundle with HasChannelBits

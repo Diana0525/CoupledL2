@@ -106,6 +106,8 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.isKeyword.foreach(_ := false.B)
     task.mergeA := false.B
     task.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
+    task.prefetchDepth := req.pfDepth
+    task.restartBit := req.restartBit
     task
   }
   if (prefetchOpt.nonEmpty) {

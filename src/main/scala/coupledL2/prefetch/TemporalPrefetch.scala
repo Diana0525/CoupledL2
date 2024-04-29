@@ -95,7 +95,7 @@ class sendBundle(implicit p: Parameters) extends TPBundle {
   val vaddr = UInt(vaddrBits.W)
 }
 
-class tpmetaPortIO() extends Bundle {
+class tpmetaPortIO(implicit p: Parameters) extends Bundle {
   val req = DecoupledIO(new TPmetaReq)
   val resp = Flipped(ValidIO(new TPmetaResp))
 }
