@@ -225,12 +225,14 @@ class PrefetchQueue(implicit p: Parameters) extends PrefetchModule {
   XSPerfAccumulate(cacheParams, "prefetch_queue_enq_fromPBOP", io.enq.fire && io.enq.bits.isPBOP)
   XSPerfAccumulate(cacheParams, "prefetch_queue_enq_fromSMS", io.enq.fire && io.enq.bits.isSMS)
   XSPerfAccumulate(cacheParams, "prefetch_queue_enq_fromTP",  io.enq.fire && io.enq.bits.isTP)
+  XSPerfAccumulate(cacheParams, "prefetch_queue_enq_fromACDP",  io.enq.fire && io.enq.bits.isACDP)
 
   XSPerfAccumulate(cacheParams, "prefetch_queue_deq",         io.deq.fire)
   XSPerfAccumulate(cacheParams, "prefetch_queue_deq_fromBOP", io.deq.fire && io.deq.bits.isBOP)
   XSPerfAccumulate(cacheParams, "prefetch_queue_deq_fromPBOP", io.deq.fire && io.deq.bits.isPBOP)
   XSPerfAccumulate(cacheParams, "prefetch_queue_deq_fromSMS", io.deq.fire && io.deq.bits.isSMS)
   XSPerfAccumulate(cacheParams, "prefetch_queue_deq_fromTP",  io.deq.fire && io.deq.bits.isTP)
+  XSPerfAccumulate(cacheParams, "prefetch_queue_deq_fromACDP",  io.deq.fire && io.deq.bits.isACDP)
 
   XSPerfHistogram(cacheParams, "prefetch_queue_entry", PopCount(valids.asUInt),
     true.B, 0, inflightEntries, 1)
@@ -258,6 +260,16 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
   prefetchOpt.get match {
     case bop: BOPParameters =>
       val pft = Module(new VBestOffsetPrefetch)
+      val pftQueue = Module(new PrefetchQueue)
+      val pipe = Module(new Pipeline(io.req.bits.cloneType, 1))
+      pft.io.train <> io.train
+      pft.io.resp <> io.resp
+      pft.io.tlb_req <> io.tlb_req
+      pftQueue.io.enq <> pft.io.req
+      pipe.io.in <> pftQueue.io.deq
+      io.req <> pipe.io.out
+    case acdp: ACDPParameters =>
+      val pft = Module(new AdvanceContentDirecetdPrefetch)
       val pftQueue = Module(new PrefetchQueue)
       val pipe = Module(new Pipeline(io.req.bits.cloneType, 1))
       pft.io.train <> io.train

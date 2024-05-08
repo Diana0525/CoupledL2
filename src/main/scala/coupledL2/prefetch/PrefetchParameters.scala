@@ -56,6 +56,7 @@ object PfSource extends Enumeration {
       is (MemReqSource.Prefetch2L2PBOP.id.U) { pfsrc := PBOP.id.U }
       is (MemReqSource.Prefetch2L2SMS.id.U) { pfsrc := SMS.id.U }
       is (MemReqSource.Prefetch2L2TP.id.U)  { pfsrc := TP.id.U  }
+      is (MemReqSource.Prefetch2L2ACDP.id.U)  { pfsrc := ACDP.id.U  }
       is (MemReqSource.Prefetch2L2Stream.id.U) { pfsrc := Stream.id.U }
       is (MemReqSource.Prefetch2L2Stride.id.U) { pfsrc := Stride.id.U }
     }
