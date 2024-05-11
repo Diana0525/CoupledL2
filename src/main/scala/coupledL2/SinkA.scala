@@ -70,6 +70,8 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.isKeyword.foreach(_ := a.echo.lift(IsKeywordKey).getOrElse(false.B)) 
     task.mergeA := false.B
     task.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
+    task.prefetchDepth := DontCare
+    task.restartBit := DontCare
     task
   }
   def fromPrefetchReqtoTaskBundle(req: PrefetchReq): TaskBundle = {

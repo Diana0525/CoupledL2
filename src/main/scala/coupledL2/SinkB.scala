@@ -66,6 +66,8 @@ class SinkB(implicit p: Parameters) extends L2Module {
     task.replTask := false.B
     task.mergeA := false.B
     task.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
+    task.prefetchDepth := DontCare
+    task.restartBit := DontCare
     task
   }
   val task = fromTLBtoTaskBundle(io.b.bits)

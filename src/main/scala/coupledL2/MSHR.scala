@@ -203,6 +203,8 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_release.reqSource := 0.U(MemReqSource.reqSourceBits.W)
     mp_release.mergeA := false.B
     mp_release.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
+    mp_release.prefetchDepth := req.prefetchDepth
+    mp_release.restartBit := req.restartBit
     mp_release
   }
 
@@ -264,6 +266,8 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_probeack.replTask := false.B
     mp_probeack.mergeA := false.B
     mp_probeack.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
+    mp_probeack.prefetchDepth := req.prefetchDepth
+    mp_probeack.restartBit := req.restartBit
     mp_probeack
   }
 
@@ -386,7 +390,8 @@ class MSHR(implicit p: Parameters) extends L2Module {
       prefetch = false.B,
       accessed = true.B
     )
-
+    mp_grant.prefetchDepth := req.prefetchDepth
+    mp_grant.restartBit := req.restartBit
     mp_grant
   }
   io.tasks.mainpipe.bits := ParallelPriorityMux(

@@ -77,8 +77,9 @@ class TestTop_L2()(implicit p: Parameters) extends LazyModule {
       case (node, i) =>
         node.makeIOs()(ValName(s"master_port_$i"))
     }
-
+    l2.module.io.l2_tlb_req := DontCare
     l2.module.io.hartId := DontCare
+    l2.module.io.debugTopDown := DontCare
   }
 
 }
@@ -133,9 +134,12 @@ class TestTop_L2L3()(implicit p: Parameters) extends LazyModule {
       sets = 128,
       clientCaches = Seq(L1Param(aliasBitsOpt = Some(2))),
       echoField = Seq(DirtyField()),
-      prefetch = Some(BOPParameters(
-        rrTableEntries = 16,
-        rrTagBits = 6
+      // prefetch = Some(BOPParameters(
+      //   rrTableEntries = 16,
+      //   rrTagBits = 6
+      // ))
+      prefetch = Some(ACDPParameters(
+
       ))
     )
   })))
@@ -190,8 +194,9 @@ class TestTop_L2L3()(implicit p: Parameters) extends LazyModule {
       case (node, i) =>
         node.makeIOs()(ValName(s"master_port_$i"))
     }
-
+    l2.module.io.debugTopDown := DontCare
     l2.module.io.hartId := DontCare
+    l2.module.io.l2_tlb_req <> DontCare
   }
 
 }
@@ -464,9 +469,11 @@ class TestTop_fullSys()(implicit p: Parameters) extends LazyModule {
         sets = 128,
         clientCaches = Seq(L1Param(aliasBitsOpt = Some(2))),
         echoField = Seq(DirtyField()),
-        prefetch = Some(BOPParameters(
-          rrTableEntries = 16,
-          rrTagBits = 6
+        // prefetch = Some(BOPParameters(
+        //   rrTableEntries = 16,
+        //   rrTagBits = 6
+        // ))
+        prefetch = Some(ACDPParameters(
         ))
       )
     })))
@@ -478,6 +485,8 @@ class TestTop_fullSys()(implicit p: Parameters) extends LazyModule {
 
     InModuleBody {
       l2.module.io.hartId := DontCare
+      l2.module.io.debugTopDown := DontCare
+      l2.module.io.l2_tlb_req <> DontCare
     }
   }
 

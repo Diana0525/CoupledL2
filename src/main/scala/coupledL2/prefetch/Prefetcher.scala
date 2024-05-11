@@ -130,10 +130,8 @@ class PrefetchReq(implicit p: Parameters) extends PrefetchBundle {
     pfSource === MemReqSource.Prefetch2L2BOP.id.U ||
     pfSource === MemReqSource.Prefetch2L2SMS.id.U ||
     pfSource === MemReqSource.Prefetch2L2TP.id.U  ||
-    pfSource === MemReqSource.Prefetch2L2ACDP.id.U
-      pfSource === MemReqSource.Prefetch2L2PBOP.id.U ||
-      pfSource === MemReqSource.Prefetch2L2SMS.id.U ||
-      pfSource === MemReqSource.Prefetch2L2TP.id.U
+    pfSource === MemReqSource.Prefetch2L2ACDP.id.U ||
+    pfSource === MemReqSource.Prefetch2L2PBOP.id.U
 }
 
 class PrefetchResp(implicit p: Parameters) extends PrefetchBundle {
@@ -268,6 +266,7 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
       pftQueue.io.enq <> pft.io.req
       pipe.io.in <> pftQueue.io.deq
       io.req <> pipe.io.out
+      println(s"============bop===============")
     case acdp: ACDPParameters =>
       val pft = Module(new AdvanceContentDirecetdPrefetch)
       val pftQueue = Module(new PrefetchQueue)
@@ -278,6 +277,7 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
       pftQueue.io.enq <> pft.io.req
       pipe.io.in <> pftQueue.io.deq
       io.req <> pipe.io.out
+      println(s"===========acdp=============")
     case receiver: PrefetchReceiverParams =>
       val pfRcv = Module(new PrefetchReceiver())
       val pbop = Module(new PBestOffsetPrefetch()(p.alterPartial({
@@ -291,6 +291,7 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
             12, 15, 16, 18, 20, 24, 25, 27, 30
           ))))
       })))
+      println(s"===============prefetch receiver============")
       val vbop = Module(new VBestOffsetPrefetch()(p.alterPartial({
         case L2ParamKey => p(L2ParamKey).copy(prefetch = Some(BOPParameters(
           badScore = 2,

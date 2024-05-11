@@ -69,12 +69,12 @@ class MissAddressTableEntry(implicit p: Parameters) extends BOPBundle {
 class TestMissAddressReq(implicit p: Parameters) extends ACDPBundle {
   /// find whether prefetch address is in cache miss table
   val pfAddr = UInt(fullAddressBits.W)
-  val ptr = UInt(log2Up(cmTableEntries).W) // index of address high bists in table
+  // val ptr = UInt(log2Up(cmTableEntries).W) // index of address high bists in table
 }
 
 class TestMissAddressResp(implicit p: Parameters) extends ACDPBundle {
   // val testAddr = UInt(cmTagBits.W)
-  val ptr = UInt(cmIdxBits.W)
+  // val ptr = UInt(cmIdxBits.W)
   val hit = Bool()
 }
 
@@ -98,8 +98,8 @@ class RecentCacheMissTable(implicit p: Parameters) extends ACDPModule {
 
     // RCM table is direct mapped, accessed through high 18 bits of address,
     // each entry holding high 18 bits of address.
-
-    def tag(addr: UInt) = addr(firstLevelPageNumHighBits,secondLevelPageNumLowBits)
+    def tag(addr: UInt) = if(fullVAddrBits >= 39) addr(firstLevelPageNumHighBits,secondLevelPageNumLowBits)
+                          else addr
     def cmTableEntry() = new Bundle {
         val valid = Bool()
         val addressHighBits = UInt(cmTagBits.W)
@@ -109,7 +109,7 @@ class RecentCacheMissTable(implicit p: Parameters) extends ACDPModule {
         new SRAMTemplate(cmTableEntry(), set = cmTableEntries, way = 1, shouldReset = true, singlePort = true)
     )
 
-    val wAddr = io.w.bits// TODO: how to make sure this is miss address?
+    val wAddr = io.w.bits
     cmTable.io.w.req.valid := io.w.valid && !io.r.req.valid
     cmTable.io.w.req.bits.setIdx := tag(wAddr)
     cmTable.io.w.req.bits.data(0).valid := true.B
@@ -127,13 +127,13 @@ class RecentCacheMissTable(implicit p: Parameters) extends ACDPModule {
     io.r.req.ready := true.B
     io.r.resp.valid := RegNext(cmTable.io.r.req.fire)
     // io.r.resp.bits.testAddr := RegNext(io.r.req.bits.testAddr)
-    io.r.resp.bits.ptr := RegNext(io.r.req.bits.ptr)
+    // io.r.resp.bits.ptr := RegNext(io.r.req.bits.ptr)
     io.r.resp.bits.hit := rData.valid && rData.addressHighBits === RegNext(tag(rAddr))
 }
 
 class PointerDataRecognition(implicit p: Parameters) extends ACDPModule {
   val io = IO(new Bundle {
-    val train = DecoupledIO(new PrefetchTrain) 
+    val train = Flipped(DecoupledIO(new PrefetchTrain))
     val pointerAddr = Output(UInt(fullVAddrBits.W)) // data of pointer
     val test = new TestMissAddressBundle
     val continuousPf = DecoupledIO(new continuousPrefetch)
@@ -146,12 +146,11 @@ class PointerDataRecognition(implicit p: Parameters) extends ACDPModule {
   val hit = io.train.bits.hit
   val compareHighBits = blockBytes - firstLevelPageNumHighBits - 1
 
+  require(pfdata.getWidth >= blockBytes * 8)
   def splitData(pfdata: UInt): Vec[UInt] = {
-    val result = VecInit(Seq.tabulate(8) { i => 
-      val startBits = i * blockBytes
-      val endBits = startBits + blockBytes
-      pfdata(startBits, endBits)
-    })
+    val result = VecInit.tabulate(8) { i => 
+      pfdata((i + 1) * blockBytes - 1, i * blockBytes)
+    }
     result
   }
 
@@ -175,7 +174,7 @@ class PointerDataRecognition(implicit p: Parameters) extends ACDPModule {
   when(firstNonZeroDataIdx =/= 0.U && io.train.fire) {
     prefetchDisable := true.B
   }
-  val ptr = UInt(cmIdxBits.W)
+  val ptr = RegInit(0.U(cmIdxBits.W))
 
   val s_idle :: s_compare :: Nil = Enum(2)
   val state = RegInit(s_idle)
@@ -208,7 +207,7 @@ class PointerDataRecognition(implicit p: Parameters) extends ACDPModule {
   io.pointerAddr := pointerAddr
   io.test.req.valid := state === s_compare && io.train.valid
   io.test.req.bits.pfAddr := filteredData(ptr) 
-  io.test.req.bits.ptr := ptr 
+  // io.test.req.bits.ptr := ptr 
   io.test.resp.ready := true.B
 
   val prefetchDepthReg = RegInit(0.U(prefetchDepthBits.W))
