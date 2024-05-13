@@ -166,7 +166,6 @@ class PrefetchTrain(implicit p: Parameters) extends PrefetchBundle {
   val pfdata = UInt((blockBytes * 8).W)
   val restartBit = Bool()
   val pfDepth = UInt(2.W)
-  val isContinuation = Bool()
 
   def addr: UInt = Cat(tag, set, 0.U(offsetBits.W))
 }
