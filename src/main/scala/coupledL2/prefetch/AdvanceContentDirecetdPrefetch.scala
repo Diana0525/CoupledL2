@@ -18,6 +18,7 @@ case class ACDPParameters(
     secondLevelPageNumLowBits: Int = 21,
     roundMax:       Int = 8,
     tlbReplayCnt:   Int = 10,
+    tagLength:      Int = 18,
   )
     extends PrefetchParameters {
   override val hasPrefetchBit:  Boolean = true
@@ -37,19 +38,13 @@ trait HasACDPParams extends HasPrefetcherHelper {
     val firstLevelPageNumLowBits = acdpParams.firstLevelPageNumLowBits
     val secondLevelPageNumHighBits = acdpParams.secondLevelPageNumHighBits
     val secondLevelPageNumLowBits = acdpParams.secondLevelPageNumLowBits
+    val tagLength = acdpParams.tagLength
 
     val roundMax  = acdpParams.roundMax
     val roundBits = log2Up(roundMax)
 
     val prefetchDepthBits = log2Up(acdpParams.prefetchDepthThreshold)
     val prefetchDepthThreshold = acdpParams.prefetchDepthThreshold
-    def signedExtend(x: UInt, width: Int): UInt = {
-        if (x.getWidth >= width) {
-        x
-        } else {
-        Cat(Fill(width - x.getWidth, x.head(1)), x)
-        }
-    }
 }
 
 abstract class ACDPBundle(implicit val p: Parameters) extends Bundle with HasACDPParams
@@ -98,7 +93,7 @@ class RecentCacheMissTable(implicit p: Parameters) extends ACDPModule {
 
     // RCM table is direct mapped, accessed through high 18 bits of address,
     // each entry holding high 18 bits of address.
-    def tag(addr: UInt) = if(fullVAddrBits >= 39) addr(firstLevelPageNumHighBits,secondLevelPageNumLowBits)
+    def tag(addr: UInt) = if(addr.getWidth >= 39) addr(38,21)
                           else addr
     def cmTableEntry() = new Bundle {
         val valid = Bool()
@@ -209,11 +204,12 @@ class PointerDataRecognition(implicit p: Parameters) extends ACDPModule {
   io.test.req.bits.pfAddr := filteredData(ptr) 
   // io.test.req.bits.ptr := ptr 
   io.test.resp.ready := true.B
+  io.prefetchDisable := prefetchDisable
 
   val prefetchDepthReg = RegInit(0.U(prefetchDepthBits.W))
   val restartBit = RegInit(false.B)
   // will trigger prefetch
-  when(pointerAddr =/= 0.U && io.train.ready) {
+  when(io.train.ready) {
     when(io.train.bits.pfDepth =/= 0.U) {
       prefetchDepthReg := RegNext(io.train.bits.pfDepth-1.U)
     }
@@ -244,6 +240,9 @@ class AcdpReqBundle(implicit p: Parameters) extends ACDPBundle{
   val needT = Bool()
   val source = UInt(sourceIdBits.W)
   val isACDP = Bool()
+  val restartBit = Bool()
+  val pfDepth = UInt(2.W)
+  
 }
 
 class AcdpReqBufferEntry(implicit p: Parameters) extends ACDPBundle {
@@ -282,6 +281,8 @@ class AcdpReqBufferEntry(implicit p: Parameters) extends ACDPBundle {
     replayCnt := 0.U
     needT := req.needT
     source := req.source
+    restartBit := req.restartBit
+    pfDepth := req.pfDepth
   }
 
   def toPrefetchReq(): PrefetchReq = {
@@ -496,6 +497,8 @@ class AdvanceContentDirecetdPrefetch(implicit p: Parameters) extends ACDPModule 
   val s1_req_valid = RegInit(false.B)
   val s1_needT = RegEnable(io.train.bits.needT, s0_fire)
   val s1_source = RegEnable(io.train.bits.source, s0_fire)
+  val s1_restartBit = RegEnable(continuousPf.bits.restartBit, continuousPf.fire)
+  val s1_pfDepth = RegEnable(continuousPf.bits.prefetchDepth, continuousPf.fire)
   val s1_pointerVaddr = RegEnable(s0_pointerVAddr, s0_fire)
   val s1_reqVaddr = RegEnable(s0_reqVaddr, s0_fire)
 
@@ -526,6 +529,8 @@ class AdvanceContentDirecetdPrefetch(implicit p: Parameters) extends ACDPModule 
     reqFilter.io.in_req.bits.needT := s1_needT
     reqFilter.io.in_req.bits.source := s1_source
     reqFilter.io.in_req.bits.isACDP := true.B
+    reqFilter.io.in_req.bits.pfDepth := s1_pfDepth
+    reqFilter.io.in_req.bits.restartBit := s1_restartBit
   }  
 
   io.tlb_req <> reqFilter.io.tlb_req
