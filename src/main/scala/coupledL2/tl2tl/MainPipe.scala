@@ -425,6 +425,8 @@ class MainPipe(implicit p: Parameters) extends L2Module {
       train.bits.prefetched := Mux(req_s3.mergeA, true.B, meta_s3.prefetch.getOrElse(false.B))
       train.bits.pfsource := meta_s3.prefetchSrc.getOrElse(PfSource.NoWhere.id.U) // TODO
       train.bits.reqsource := req_s3.reqSource
+      train.bits.pfDepth := req_s3.prefetchDepth
+      train.bits.restartBit := Mux(req_s3.mergeA, meta_s3.restartBit.getOrElse(false.B), false.B)
   }
 
   /* ======== Stage 4 ======== */
