@@ -346,6 +346,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
       prefetch = req_prefetch || dirResult.hit && meta_pft,
       pfsrc = PfSource.fromMemReqSource(req.reqSource),
       accessed = req_acquire || req_get
+      
     )
     mp_grant.metaWen := true.B
     mp_grant.tagWen := !dirResult.hit
@@ -390,8 +391,10 @@ class MSHR(implicit p: Parameters) extends L2Module {
       prefetch = false.B,
       accessed = true.B
     )
-    mp_grant.prefetchDepth := req.prefetchDepth
-    mp_grant.restartBit := req.restartBit
+    mp_grant.aMergeTask.prefetchDepth := merge_task.prefetchDepth
+    mp_grant.aMergeTask.restartBit := merge_task.restartBit
+    mp_grant.prefetchDepth := merge_task.prefetchDepth
+    mp_grant.restartBit := merge_task.restartBit
     mp_grant
   }
   io.tasks.mainpipe.bits := ParallelPriorityMux(

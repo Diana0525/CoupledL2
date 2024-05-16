@@ -48,6 +48,8 @@ class MergeTaskBundle(implicit p: Parameters) extends L2Bundle {
   val param = UInt(3.W)
   val sourceId = UInt(sourceIdBits.W) // tilelink sourceID
   val meta = new MetaEntry()
+  val prefetchDepth = UInt(2.W)
+  val restartBit = Bool()
 }
 
 // We generate a Task for every TL request

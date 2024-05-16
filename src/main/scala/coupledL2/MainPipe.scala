@@ -423,7 +423,7 @@ class MainPipe(implicit p: Parameters) extends L2Module {
       train.bits.pfdata := Mux(task_s3.valid && task_s3.bits.mshrTask && task_s3.bits.opcode === HintAck && task_s3.bits.dsWen,
                              io.refillBufResp_s3.bits.data, 0.U((blockBytes * 8).W))
       train.bits.pfDepth := req_s3.prefetchDepth
-      train.bits.restartBit := req_s3.restartBit
+      train.bits.restartBit := Mux(req_s3.mergeA, meta_s3.restartBit.getOrElse(false.B), false.B)
   }
 
   /* ======== Stage 4 ======== */

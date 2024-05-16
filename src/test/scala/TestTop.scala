@@ -132,7 +132,10 @@ class TestTop_L2L3()(implicit p: Parameters) extends LazyModule {
       name = s"l2",
       ways = 4,
       sets = 128,
-      clientCaches = Seq(L1Param(aliasBitsOpt = Some(2))),
+      clientCaches = Seq(
+        L1Param(aliasBitsOpt = Some(2),
+        vaddrBitsOpt = Some(39 - 6)
+      )),
       echoField = Seq(DirtyField()),
       // prefetch = Some(BOPParameters(
       //   rrTableEntries = 16,
@@ -291,6 +294,8 @@ class TestTop_L2_Standalone()(implicit p: Parameters) extends LazyModule {
     l3.makeIOs()(ValName(s"slave_port"))
 
     l2.module.io.hartId := DontCare
+    l2.module.io.l2_tlb_req <> DontCare
+    l2.module.io.debugTopDown := DontCare
   }
 
 }
@@ -338,9 +343,14 @@ class TestTop_L2L3L2()(implicit p: Parameters) extends LazyModule {
       name = s"l2$i",
       ways = 4,
       sets = 128,
-      clientCaches = Seq(L1Param(aliasBitsOpt = Some(2))),
+      clientCaches = Seq(L1Param(aliasBitsOpt = Some(2),
+                vaddrBitsOpt = Some(39 - 6)),
+      ),
       echoField = Seq(DirtyField()),
-      hartIds = Seq{i}
+      hartIds = Seq{i},
+      prefetch = Some(ACDPParameters(
+        ))
+      // prefetch = Some(BOPParameters())
     )
   }))))
   val l2_nodes = coupledL2.map(_.node)
@@ -467,7 +477,9 @@ class TestTop_fullSys()(implicit p: Parameters) extends LazyModule {
         name = s"l2$i",
         ways = 4,
         sets = 128,
-        clientCaches = Seq(L1Param(aliasBitsOpt = Some(2))),
+        clientCaches = Seq(L1Param(
+          aliasBitsOpt = Some(2),
+          vaddrBitsOpt = Some(39 - 6))),
         echoField = Seq(DirtyField()),
         // prefetch = Some(BOPParameters(
         //   rrTableEntries = 16,
@@ -608,7 +620,8 @@ object TestTop_L2L3L2 extends App {
     ChiselGeneratorAnnotation(() => top.module)
   ))
 
-  ChiselDB.init(false)
+  // ChiselDB.init(false)
+  ChiselDB.init(true)
   ChiselDB.addToFileRegisters
   FileRegisters.write("./build")
 }

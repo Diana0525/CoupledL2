@@ -115,7 +115,6 @@ class RecentCacheMissTable(implicit p: Parameters) extends ACDPModule {
     cmTable.io.r.req.valid := io.r.req.fire
     cmTable.io.r.req.bits.setIdx := rAddr
     rData := cmTable.io.r.resp.data(0)// TODO:确认index找不到数据会读出什么
-
     assert(!RegNext(io.w.fire && io.r.req.fire), "single port SRAM should not read and write at the same time")
 
     io.w.ready := cmTable.io.w.req.ready && !io.r.req.valid
@@ -124,6 +123,21 @@ class RecentCacheMissTable(implicit p: Parameters) extends ACDPModule {
     // io.r.resp.bits.testAddr := RegNext(io.r.req.bits.testAddr)
     // io.r.resp.bits.ptr := RegNext(io.r.req.bits.ptr)
     io.r.resp.bits.hit := rData.valid && rData.addressHighBits === RegNext(tag(rAddr))
+
+    // DB test
+    class AcdpTrainEntry extends Bundle {
+      val wAddr = UInt(fullVAddrBits.W)
+      val rAddr = UInt(fullAddressBits.W)
+    }
+
+    val l2AcdpTrainTable = ChiselDB.createTable("L2AcdpTrainTable", new AcdpTrainEntry, basicDB = true)
+
+    for (i <- 0 until REQ_FILTER_SIZE) {
+      val data = Wire(new AcdpTrainEntry)
+      data.wAddr := wAddr
+      data.rAddr := rAddr
+      l2AcdpTrainTable.log(data = data, en = io.w.fire || io.r.req.fire, site = name+"recentMissAddrTable", clock, reset)
+    }
 }
 
 class PointerDataRecognition(implicit p: Parameters) extends ACDPModule {
@@ -333,7 +347,8 @@ class ACDPPrefetchReqBuffer(implicit p: Parameters) extends ACDPModule {
     val out_req = DecoupledIO(new PrefetchReq)
   })
 
-  val firstTlbReplayCnt = WireInit(Constantin.createRecord("firstTlbReplayCnt", acdpParams.tlbReplayCnt.U))
+  // val firstTlbReplayCnt = WireInit(Constantin.createRecord("firstTlbReplayCnt", acdpParams.tlbReplayCnt.U))
+  val firstTlbReplayCnt = acdpParams.tlbReplayCnt.U
   val entries = Seq.fill(REQ_FILTER_SIZE)(Reg(new(AcdpReqBufferEntry)))
   def wayMap[T <: Data](f: Int => T) = VecInit((0 until REQ_FILTER_SIZE).map(f))
   def get_flag(vaddr: UInt) = get_block_vaddr(vaddr)

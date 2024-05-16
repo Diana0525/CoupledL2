@@ -35,7 +35,7 @@ class MetaEntry(implicit p: Parameters) extends L2Bundle {
   val prefetch = if (hasPrefetchBit) Some(Bool()) else None // whether block is prefetched
   val prefetchSrc = if (hasPrefetchSrc) Some(UInt(PfSource.pfSourceBits.W)) else None // prefetch source
   val accessed = Bool()
-
+  val restartBit = if (hasPrefetchSrc) Some(Bool()) else None // ACDP: whether block placed a restartbit
   def =/=(entry: MetaEntry): Bool = {
     this.asUInt =/= entry.asUInt
   }
@@ -47,7 +47,7 @@ object MetaEntry {
     init
   }
   def apply(dirty: Bool, state: UInt, clients: UInt, alias: Option[UInt], prefetch: Bool = false.B,
-            pfsrc: UInt = PfSource.NoWhere.id.U, accessed: Bool = false.B
+            pfsrc: UInt = PfSource.NoWhere.id.U, accessed: Bool = false.B, restartBit: Bool = false.B
   )(implicit p: Parameters) = {
     val entry = Wire(new MetaEntry)
     entry.dirty := dirty
@@ -57,6 +57,7 @@ object MetaEntry {
     entry.prefetch.foreach(_ := prefetch)
     entry.prefetchSrc.foreach(_ := pfsrc)
     entry.accessed := accessed
+    entry.restartBit.foreach(_ := restartBit)
     entry
   }
 }
