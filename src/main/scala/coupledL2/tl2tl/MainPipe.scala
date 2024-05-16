@@ -1,3 +1,4 @@
+
 /** *************************************************************************************
  * Copyright (c) 2020-2021 Institute of Computing Technology, Chinese Academy of Sciences
  * Copyright (c) 2020-2021 Peng Cheng Laboratory
@@ -15,7 +16,7 @@
  * *************************************************************************************
  */
 
-package coupledL2
+package coupledL2.tl2tl
 
 import chisel3._
 import chisel3.util._
@@ -25,6 +26,7 @@ import org.chipsalliance.cde.config.Parameters
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.tilelink.TLMessages._
 import freechips.rocketchip.tilelink.TLPermissions._
+import coupledL2._
 import coupledL2.utils._
 import coupledL2.debug._
 import coupledL2.prefetch.{PfSource, PrefetchTrain}
@@ -225,9 +227,11 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   ms_task.reqSource        := req_s3.reqSource
   ms_task.mergeA           := req_s3.mergeA
   ms_task.aMergeTask       := req_s3.aMergeTask
-  ms_task.prefetchDepth    := req_s3.prefetchDepth
-  ms_task.restartBit       := req_s3.restartBit
-  
+  ms_task.txChannel        := 0.U
+  ms_task.snpHitRelease    := false.B
+  ms_task.snpHitReleaseWithData := false.B
+  ms_task.snpHitReleaseIdx := 0.U
+
   /* ======== Resps to SinkA/B/C Reqs ======== */
   val sink_resp_s3 = WireInit(0.U.asTypeOf(Valid(new TaskBundle))) // resp for sinkA/B/C request that does not need to alloc mshr
   val sink_resp_s3_a_promoteT = dirResult_s3.hit && isT(meta_s3.state)
@@ -402,6 +406,7 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   // This serves as VALID signal
   // c_set_dirty is true iff Release has Data
   io.nestedwb.c_set_dirty := task_s3.valid && task_s3.bits.fromC && task_s3.bits.opcode === ReleaseData
+  io.nestedwb.b_inv_dirty := false.B
 
   io.nestedwbData := c_releaseData_s3.asTypeOf(new DSBlock)
 
@@ -420,10 +425,6 @@ class MainPipe(implicit p: Parameters) extends L2Module {
       train.bits.prefetched := Mux(req_s3.mergeA, true.B, meta_s3.prefetch.getOrElse(false.B))
       train.bits.pfsource := meta_s3.prefetchSrc.getOrElse(PfSource.NoWhere.id.U) // TODO
       train.bits.reqsource := req_s3.reqSource
-      train.bits.pfdata := Mux(task_s3.valid && task_s3.bits.mshrTask && task_s3.bits.opcode === HintAck && task_s3.bits.dsWen,
-                             io.refillBufResp_s3.bits.data, 0.U((blockBytes * 8).W))
-      train.bits.pfDepth := req_s3.prefetchDepth
-      train.bits.restartBit := Mux(req_s3.mergeA, meta_s3.restartBit.getOrElse(false.B), false.B)
   }
 
   /* ======== Stage 4 ======== */
@@ -508,6 +509,7 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   io.releaseBufWrite.valid      := task_s5.valid && need_write_releaseBuf_s5
   io.releaseBufWrite.bits.id    := task_s5.bits.mshrId
   io.releaseBufWrite.bits.data.data := rdata_s5
+  io.releaseBufWrite.bits.beatMask := Fill(beatSize, true.B)
 
   val c_d_valid_s5 = task_s5.valid && !RegNext(chnl_fire_s4, false.B) && !RegNextN(chnl_fire_s3, 2, Some(false.B))
   c_s5.valid := c_d_valid_s5 && isC_s5
