@@ -362,7 +362,7 @@ class TestTop_L2L3L2()(implicit p: Parameters) extends LazyModule {
                 vaddrBitsOpt = Some(39 - 6)),
       ),
       echoField = Seq(DirtyField()),
-      hartIds = Seq{i},
+      hartId = i,
       prefetch = Some(ACDPParameters(
         ))
       // prefetch = Some(BOPParameters())

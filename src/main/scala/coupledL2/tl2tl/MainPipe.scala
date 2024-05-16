@@ -227,6 +227,8 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   ms_task.reqSource        := req_s3.reqSource
   ms_task.mergeA           := req_s3.mergeA
   ms_task.aMergeTask       := req_s3.aMergeTask
+  ms_task.prefetchDepth    := req_s3.prefetchDepth
+  ms_task.restartBit       := req_s3.restartBit
   ms_task.txChannel        := 0.U
   ms_task.snpHitRelease    := false.B
   ms_task.snpHitReleaseWithData := false.B
@@ -425,6 +427,8 @@ class MainPipe(implicit p: Parameters) extends L2Module {
       train.bits.prefetched := Mux(req_s3.mergeA, true.B, meta_s3.prefetch.getOrElse(false.B))
       train.bits.pfsource := meta_s3.prefetchSrc.getOrElse(PfSource.NoWhere.id.U) // TODO
       train.bits.reqsource := req_s3.reqSource
+      train.bits.pfdata := Mux(task_s3.valid && task_s3.bits.mshrTask && task_s3.bits.opcode === HintAck && task_s3.bits.dsWen,
+                              io.refillBufResp_s3.bits.data, 0.U((blockBytes * 8).W))
       train.bits.pfDepth := req_s3.prefetchDepth
       train.bits.restartBit := Mux(req_s3.mergeA, meta_s3.restartBit.getOrElse(false.B), false.B)
   }
