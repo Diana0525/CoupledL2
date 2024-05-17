@@ -3,7 +3,9 @@
 	url = https://github.com/OpenXiangShan/rocket-chip.git
 [submodule "utility"]
 	path = utility
-	url = https://github.com/OpenXiangShan/utility
+	url = https://github.com/Diana0525/utility
+	branch = acdp
 [submodule "HuanCun"]
 	path = HuanCun
-	url = https://github.com/OpenXiangShan/HuanCun.git
+	url = https://github.com/Diana0525/HuanCun.git
+	branch = acdp
