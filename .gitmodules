@@ -9,3 +9,6 @@
 	path = HuanCun
 	url = https://github.com/Diana0525/HuanCun.git
 	branch = acdp
+[submodule "tl-test"]
+	path = tl-test
+	url = https://github.com/OpenXiangShan/tl-test.git
