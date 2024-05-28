@@ -303,6 +303,7 @@ class MainPipe(implicit p: Parameters) extends L2Module {
       io.refillBufResp_s3.bits.data
     )
   )
+  io.toDS.wdata_s3.restartBit := req_s3.restartBit
 
   /* ======== Read DS and store data in Buffer ======== */
   // A: need_write_releaseBuf indicates that DS should be read and the data will be written into ReleaseBuffer
@@ -399,8 +400,10 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   d_s3.valid := task_s3.valid && isD_s3
   c_s3.bits.task      := source_req_s3
   c_s3.bits.data.data := data_s3
+  c_s3.bits.data.restartBit := DontCare
   d_s3.bits.task      := source_req_s3
   d_s3.bits.data.data := data_s3
+  d_s3.bits.data.restartBit := DontCare
 
   /* ======== nested & prefetch ======== */
   io.nestedwb.set := req_s3.set
@@ -430,7 +433,8 @@ class MainPipe(implicit p: Parameters) extends L2Module {
       train.bits.pfdata := Mux(task_s3.valid && task_s3.bits.mshrTask && task_s3.bits.opcode === HintAck && task_s3.bits.dsWen,
                               io.refillBufResp_s3.bits.data, 0.U((blockBytes * 8).W))
       train.bits.pfDepth := req_s3.prefetchDepth
-      train.bits.restartBit := Mux(req_s3.mergeA, meta_s3.restartBit.getOrElse(false.B), false.B)
+      train.bits.restartBit := Mux(task_s3.valid && task_s3.bits.mshrTask && task_s3.bits.opcode === HintAck && task_s3.bits.dsWen,
+                              io.refillBufResp_s3.bits.restartBit, false.B)
   }
 
   /* ======== Stage 4 ======== */
@@ -471,9 +475,11 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   d_s4.valid := c_d_valid_s4 && isD_s4
   c_s4.bits.task := task_s4.bits
   c_s4.bits.data.data := data_s4
+  c_s4.bits.data.restartBit := DontCare
   d_s4.bits.task := task_s4.bits
   d_s4.bits.task.isKeyword.foreach(_ := task_s4.bits.isKeyword.getOrElse(false.B))
   d_s4.bits.data.data := data_s4
+  d_s4.bits.data.restartBit := DontCare
 
   /* ======== Stage 5 ======== */
   val task_s5 = RegInit(0.U.asTypeOf(Valid(new TaskBundle())))
@@ -515,6 +521,7 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   io.releaseBufWrite.valid      := task_s5.valid && need_write_releaseBuf_s5
   io.releaseBufWrite.bits.id    := task_s5.bits.mshrId
   io.releaseBufWrite.bits.data.data := rdata_s5
+  io.releaseBufWrite.bits.data.restartBit := DontCare
   io.releaseBufWrite.bits.beatMask := Fill(beatSize, true.B)
 
   val c_d_valid_s5 = task_s5.valid && !RegNext(chnl_fire_s4, false.B) && !RegNextN(chnl_fire_s3, 2, Some(false.B))
@@ -522,8 +529,10 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   d_s5.valid := c_d_valid_s5 && isD_s5
   c_s5.bits.task := task_s5.bits
   c_s5.bits.data.data := out_data_s5
+  c_s5.bits.data.restartBit := DontCare
   d_s5.bits.task := task_s5.bits
   d_s5.bits.data.data := out_data_s5
+  d_s5.bits.data.restartBit := DontCare
 
   /* ======== BlockInfo ======== */
   // if s2/s3 might write Dir, we must block s1 sink entrance

@@ -18,7 +18,7 @@ import coupledL2.tl2tl._
 
 
 object TestProbeQueue extends App {
-  val config = new Config((_, _, _) => {
+  val config = baseConfig(1).alterPartial( {
     case L2ParamKey => L2Param(
       echoField = Seq(DirtyField())
     )
