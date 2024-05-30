@@ -91,10 +91,7 @@ class RecentCacheMissTable(implicit p: Parameters) extends ACDPModule {
     })
     // RCM table is direct mapped, accessed through high 18 bits of address,
     // each entry holding high 18 bits of address.
-    def lineAddr(addr: UInt) = addr(fullVAddrBits - 1, offsetBits)
-    def hash1(addr:    UInt) = lineAddr(addr)(cmIdxBits - 1, 0)
-    def hash2(addr:    UInt) = lineAddr(addr)(2 * cmIdxBits - 1, cmIdxBits)
-    def idx(addr:      UInt) = hash1(addr) ^ hash2(addr)
+    def idx(addr: UInt) = addr(fullVAddrBits - 1, fullVAddrBits - cmIdxBits - 1)
     def tag(addr: UInt) = if(addr.getWidth >= 39) addr(38,21)
                           else addr
     def cmTableEntry() = new Bundle {
@@ -201,40 +198,41 @@ class PointerDataRecognition(implicit p: Parameters) extends ACDPModule {
       pointerAddr := filteredData(io.test.resp.bits.ptr)
   }
 
+  val prefetchDepthReg = RegInit(0.U(prefetchDepthBits.W))
+  val restartBit = RegInit(false.B)
+  // will trigger prefetch
+  when(io.train.valid) {
+    when(io.train.bits.pfDepth =/= 0.U) {
+      prefetchDepthReg := io.train.bits.pfDepth-1.U
+    }
+
+    when(io.train.bits.pfsource =/= MemReqSource.Prefetch2L2ACDP.id.U) {
+      prefetchDepthReg := prefetchDepthThreshold.U
+      restartBit := true.B
+    }
+
+    when(hit && io.train.bits.restartBit && io.train.bits.pfsource === MemReqSource.Prefetch2L2ACDP.id.U) {
+      prefetchDepthReg := prefetchDepthThreshold.U
+      restartBit := false.B
+    }
+
+    when(hit && io.train.bits.pfDepth === 2.U && io.train.bits.pfsource === MemReqSource.Prefetch2L2ACDP.id.U) {
+      prefetchDepthReg := io.train.bits.pfDepth-1.U
+      restartBit := true.B
+    }
+  }
+  io.continuousPf.valid := io.train.valid && pointerAddr =/= 0.U
+  io.continuousPf.bits.prefetchDepth := prefetchDepthReg
+  io.continuousPf.bits.restartBit := restartBit
+
+  val disableContinuous = io.train.bits.pfDepth === 0.U && io.train.bits.pfsource === MemReqSource.Prefetch2L2ACDP.id.U
   io.train.ready := state === s_compare
-  io.pointerAddr := pointerAddr
+  io.pointerAddr := Mux(disableContinuous, 0.U, pointerAddr)
   io.test.req.valid := state === s_compare && io.train.valid
   io.test.req.bits.pfAddr := testPfAdress
   io.test.req.bits.ptr := ptr
   io.test.resp.ready := true.B
   io.prefetchDisable := prefetchDisable
-
-  val prefetchDepthReg = RegInit(0.U(prefetchDepthBits.W))
-  val restartBit = RegInit(false.B)
-  // will trigger prefetch
-  when(io.train.ready) {
-    when(io.train.bits.pfDepth =/= 0.U) {
-      prefetchDepthReg := RegNext(io.train.bits.pfDepth-1.U)
-    }
-
-    when(io.train.bits.pfsource =/= MemReqSource.Prefetch2L2ACDP.id.U) {
-      prefetchDepthReg := RegNext(prefetchDepthThreshold.U)
-      restartBit := RegNext(true.B)
-    }
-
-    when(hit && io.train.bits.restartBit && io.train.bits.pfsource === MemReqSource.Prefetch2L2ACDP.id.U) {
-      prefetchDepthReg := RegNext(prefetchDepthThreshold.U)
-      restartBit := RegNext(false.B)
-    }
-
-    when(hit && io.train.bits.pfDepth === 2.U && io.train.bits.pfsource === MemReqSource.Prefetch2L2ACDP.id.U) {
-      prefetchDepthReg := RegNext(io.train.bits.pfDepth-1.U)
-      restartBit := RegNext(true.B)
-    }
-  }
-  io.continuousPf.valid := io.train.ready && pointerAddr =/= 0.U
-  io.continuousPf.bits.prefetchDepth := prefetchDepthReg
-  io.continuousPf.bits.restartBit := restartBit
 }
 
 class AcdpReqBundle(implicit p: Parameters) extends ACDPBundle{

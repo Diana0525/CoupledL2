@@ -351,7 +351,7 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
       vbop.io.train.valid := io.train.valid && (io.train.bits.reqsource =/= MemReqSource.L1DataPrefetch.id.U)
       vbop.io.resp <> io.resp
       vbop.io.resp.valid := io.resp.valid && io.resp.bits.isBOP
-      vbop.io.tlb_req <> io.tlb_req
+      vbop.io.tlb_req <> DontCare
       vbop.io.pbopCrossPage := true.B // pbop.io.pbopCrossPage // let vbop have noting to do with pbop
 
       acdp.io.train <> io.train
