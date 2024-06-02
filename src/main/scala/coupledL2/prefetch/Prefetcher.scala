@@ -117,7 +117,6 @@ class PrefetchReq(implicit p: Parameters) extends PrefetchBundle {
   val needT = Bool()
   val source = UInt(sourceIdBits.W)
   val pfSource = UInt(MemReqSource.reqSourceBits.W)
-  val restartBit = Bool()// TODO: transfer to block prefetched
   val pfDepth = UInt(2.W)
 
   def isBOP:Bool = pfSource === MemReqSource.Prefetch2L2BOP.id.U
@@ -166,7 +165,6 @@ class PrefetchTrain(implicit p: Parameters) extends PrefetchBundle {
   val pfsource = UInt(PfSource.pfSourceBits.W)
   val reqsource = UInt(MemReqSource.reqSourceBits.W)
   val pfdata = UInt((blockBytes * 8).W)
-  val restartBit = Bool()
   val pfDepth = UInt(2.W)
 
   def addr: UInt = Cat(tag, set, 0.U(offsetBits.W))

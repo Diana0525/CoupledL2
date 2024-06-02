@@ -63,7 +63,6 @@ class MSHRBuffer(wPorts: Int = 1)(implicit p: Parameters) extends L2Module {
 
   val ridReg = RegEnable(io.r.bits.id, 0.U(mshrBits.W), io.r.valid)
   io.resp.data.data := buffer(ridReg).asUInt
-  io.resp.data.restartBit := DontCare
 }
 
 // may consider just choose an empty entry to insert

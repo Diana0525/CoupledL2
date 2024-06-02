@@ -51,7 +51,6 @@ class MergeTaskBundle(implicit p: Parameters) extends L2Bundle {
   val sourceId = UInt(sourceIdBits.W) // tilelink sourceID
   val meta = new MetaEntry()
   val prefetchDepth = UInt(2.W)
-  val restartBit = Bool()
 }
 
 // We generate a Task for every TL request
@@ -113,7 +112,6 @@ class TaskBundle(implicit p: Parameters) extends L2Bundle
   val aMergeTask = new MergeTaskBundle()
 
   val prefetchDepth = UInt(2.W)
-  val restartBit = Bool()
 
   // Used for get data from ReleaseBuf when snoop hit with same PA 
   val snpHitRelease = Bool()

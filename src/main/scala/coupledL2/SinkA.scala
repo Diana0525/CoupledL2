@@ -73,7 +73,6 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.mergeA := false.B
     task.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
     task.prefetchDepth := DontCare
-    task.restartBit := DontCare
     task
   }
   def fromPrefetchReqtoTaskBundle(req: PrefetchReq): TaskBundle = {
@@ -112,7 +111,6 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.mergeA := false.B
     task.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
     task.prefetchDepth := req.pfDepth
-    task.restartBit := req.restartBit
     task
   }
   if (prefetchOpt.nonEmpty) {

@@ -367,7 +367,6 @@ class BopReqBufferEntry(implicit p: Parameters) extends BOPBundle {
     req.source := source
     req.pfSource := MemReqSource.Prefetch2L2BOP.id.U
     req.pfDepth := DontCare
-    req.restartBit := DontCare
     req
   }
 

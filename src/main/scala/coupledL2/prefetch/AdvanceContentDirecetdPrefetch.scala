@@ -78,10 +78,7 @@ class TestMissAddressBundle(implicit p: Parameters) extends ACDPBundle {
 }
 
 class continuousPrefetch(implicit p: Parameters) extends ACDPBundle {
-  // val pfData = UInt((blockBytes * 8).W)
   val prefetchDepth = UInt(prefetchDepthBits.W)
-  val restartBit = Bool()
-  // val isContinuation = Bool() // whether is first prefetch
 }
 
 class RecentCacheMissTable(implicit p: Parameters) extends ACDPModule {
@@ -199,31 +196,26 @@ class PointerDataRecognition(implicit p: Parameters) extends ACDPModule {
   }
 
   val prefetchDepthReg = RegInit(0.U(prefetchDepthBits.W))
-  val restartBit = RegInit(false.B)
   // will trigger prefetch
   when(io.train.valid) {
-    when(io.train.bits.pfDepth =/= 0.U) {
-      prefetchDepthReg := io.train.bits.pfDepth-1.U
-    }
-
     when(io.train.bits.pfsource =/= MemReqSource.Prefetch2L2ACDP.id.U) {
       prefetchDepthReg := prefetchDepthThreshold.U
-      restartBit := true.B
     }
 
-    when(hit && io.train.bits.restartBit && io.train.bits.pfsource === MemReqSource.Prefetch2L2ACDP.id.U) {
-      prefetchDepthReg := prefetchDepthThreshold.U
-      restartBit := false.B
+    when(hit && io.train.bits.pfsource === MemReqSource.Prefetch2L2ACDP.id.U) {
+      prefetchDepthReg := io.train.bits.pfDepth-1.U
     }
 
     when(hit && io.train.bits.pfDepth === 2.U && io.train.bits.pfsource === MemReqSource.Prefetch2L2ACDP.id.U) {
+      prefetchDepthReg := prefetchDepthThreshold.U
+    }
+
+    when(io.train.bits.pfDepth =/= 0.U) {
       prefetchDepthReg := io.train.bits.pfDepth-1.U
-      restartBit := true.B
     }
   }
   io.continuousPf.valid := io.train.valid && pointerAddr =/= 0.U
   io.continuousPf.bits.prefetchDepth := prefetchDepthReg
-  io.continuousPf.bits.restartBit := restartBit
 
   val disableContinuous = io.train.bits.pfDepth === 0.U && io.train.bits.pfsource === MemReqSource.Prefetch2L2ACDP.id.U
   io.train.ready := state === s_compare
@@ -240,7 +232,6 @@ class AcdpReqBundle(implicit p: Parameters) extends ACDPBundle{
   val needT = Bool()
   val source = UInt(sourceIdBits.W)
   val isACDP = Bool()
-  val restartBit = Bool()
   val pfDepth = UInt(2.W)
   
 }
@@ -255,7 +246,6 @@ class AcdpReqBufferEntry(implicit p: Parameters) extends ACDPBundle {
   val replayCnt = UInt(4.W)
   val needT = Bool()
   val source = UInt(sourceIdBits.W)
-  val restartBit = Bool()
   val pfDepth = UInt(2.W)
 
   def reset(x:UInt): Unit = {
@@ -278,7 +268,6 @@ class AcdpReqBufferEntry(implicit p: Parameters) extends ACDPBundle {
     replayCnt := 0.U
     needT := req.needT
     source := req.source
-    restartBit := req.restartBit
     pfDepth := req.pfDepth
   }
 
@@ -291,7 +280,6 @@ class AcdpReqBufferEntry(implicit p: Parameters) extends ACDPBundle {
     req.source := source
     req.pfSource := MemReqSource.Prefetch2L2ACDP.id.U
     req.pfDepth := pfDepth
-    req.restartBit := restartBit
     req
   }
 
@@ -494,7 +482,6 @@ class AdvanceContentDirecetdPrefetch(implicit p: Parameters) extends ACDPModule 
   val s1_req_valid = RegInit(false.B)
   val s1_needT = RegEnable(io.train.bits.needT, s0_fire)
   val s1_source = RegEnable(io.train.bits.source, s0_fire)
-  val s1_restartBit = RegEnable(continuousPf.bits.restartBit, continuousPf.fire)
   val s1_pfDepth = RegEnable(continuousPf.bits.prefetchDepth, continuousPf.fire)
   val s1_pointerVaddr = RegEnable(s0_pointerVAddr, s0_fire)
 
@@ -525,7 +512,6 @@ class AdvanceContentDirecetdPrefetch(implicit p: Parameters) extends ACDPModule 
     reqFilter.io.in_req.bits.source := s1_source
     reqFilter.io.in_req.bits.isACDP := true.B
     reqFilter.io.in_req.bits.pfDepth := s1_pfDepth
-    reqFilter.io.in_req.bits.restartBit := s1_restartBit
   }  
 
   io.tlb_req <> reqFilter.io.tlb_req
@@ -533,7 +519,5 @@ class AdvanceContentDirecetdPrefetch(implicit p: Parameters) extends ACDPModule 
 
   XSPerfAccumulate(cacheParams, "acdp_req", io.req.fire)
   XSPerfAccumulate(cacheParams, "acdp_train", io.train.fire)
-  XSPerfAccumulate(cacheParams, "acdp_pointer_address_" + pdRecognition.io.pointerAddr.toString, 
-                  pdRecognition.io.pointerAddr =/= 0.U)
 
 }

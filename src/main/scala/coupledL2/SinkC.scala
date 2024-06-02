@@ -101,7 +101,6 @@ class SinkC(implicit p: Parameters) extends L2Module {
     task.mergeA := false.B
     task.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
     task.prefetchDepth := DontCare
-    task.restartBit := DontCare
     task
   }
 
@@ -163,7 +162,6 @@ class SinkC(implicit p: Parameters) extends L2Module {
   io.releaseBufWrite.valid := io.c.valid && io.c.bits.opcode === ProbeAckData && last
   io.releaseBufWrite.bits.id := 0.U(mshrBits.W) // id is given by MSHRCtl by comparing address to the MSHRs
   io.releaseBufWrite.bits.data.data := Cat(io.c.bits.data, probeAckDataBuf)
-  io.releaseBufWrite.bits.data.restartBit := DontCare
   io.releaseBufWrite.bits.beatMask := Fill(beatSize, true.B)
 
   // C-Release, with new data, comes before repl-Release writes old refill data back to DS
@@ -181,7 +179,6 @@ class SinkC(implicit p: Parameters) extends L2Module {
   io.refillBufWrite.valid := RegNext(io.task.fire && io.task.bits.opcode === ReleaseData && newdataMask.orR, false.B)
   io.refillBufWrite.bits.id := RegNext(OHToUInt(newdataMask))
   io.refillBufWrite.bits.data.data := dataBuf(RegNext(io.task.bits.bufIdx)).asUInt
-  io.refillBufWrite.bits.data.restartBit := DontCare
   io.refillBufWrite.bits.beatMask := Fill(beatSize, true.B)
 
   io.c.ready := !isRelease || !first || !full
