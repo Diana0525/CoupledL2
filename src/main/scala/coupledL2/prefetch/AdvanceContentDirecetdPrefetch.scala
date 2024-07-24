@@ -7,6 +7,7 @@ import chisel3.util._
 import chisel3.DontCare.:=
 import coupledL2.utils.{ReplacementPolicy, XSPerfAccumulate}
 import coupledL2.{HasCoupledL2Parameters, L2TlbReq, L2ToL1TlbIO, TlbCmd}
+import java.lang.reflect.Parameter
 
 case class ACDPParameters(
     cmTableEntries: Int = 128,
@@ -19,6 +20,8 @@ case class ACDPParameters(
     roundMax:       Int = 8,
     tlbReplayCnt:   Int = 10,
     tagLength:      Int = 18,
+    pdQueuelength:  Int = 16,
+    pdMaxLatency: Int = 32,
   )
     extends PrefetchParameters {
   override val hasPrefetchBit:  Boolean = true
@@ -45,6 +48,10 @@ trait HasACDPParams extends HasPrefetcherHelper {
 
     val prefetchDepthBits = log2Up(acdpParams.prefetchDepthThreshold)
     val prefetchDepthThreshold = acdpParams.prefetchDepthThreshold
+
+    val tlbReplayCnt = acdpParams.tlbReplayCnt
+    val pdQueuelength = acdpParams.pdQueuelength
+    val pdMaxLatency = acdpParams.pdMaxLatency
 }
 
 abstract class ACDPBundle(implicit val p: Parameters) extends Bundle with HasACDPParams
@@ -63,13 +70,13 @@ class MissAddressTableEntry(implicit p: Parameters) extends BOPBundle {
 
 class TestMissAddressReq(implicit p: Parameters) extends ACDPBundle {
   /// find whether prefetch address is in cache miss table
-  val pfAddr = UInt(fullVAddrBits.W)
-  val ptr = UInt(3.W)
+  val pfAddr = UInt((fullVAddrBits-offsetBits).W)
+  // val ptr = UInt(3.W)
 }
 
 class TestMissAddressResp(implicit p: Parameters) extends ACDPBundle {
   val hit = Bool()
-  val ptr = UInt(3.W)
+  // val ptr = UInt(3.W)
 }
 
 class TestMissAddressBundle(implicit p: Parameters) extends ACDPBundle {
@@ -83,30 +90,33 @@ class continuousPrefetch(implicit p: Parameters) extends ACDPBundle {
 
 class RecentCacheMissTable(implicit p: Parameters) extends ACDPModule {
     val io = IO(new Bundle {
-        val w = Flipped(DecoupledIO(UInt(fullVAddrBits.W)))
+        val w = Flipped(DecoupledIO(UInt((fullVAddrBits-offsetBits).W)))
         val r = Flipped(new TestMissAddressBundle)
     })
     // RCM table is direct mapped, accessed through high 18 bits of address,
     // each entry holding high 18 bits of address.
-    def idx(addr: UInt) = addr(fullVAddrBits - 1, fullVAddrBits - cmIdxBits - 1)
-    def tag(addr: UInt) = if(addr.getWidth >= 39) addr(38,21)
-                          else addr
+    def lineAddr(addr: UInt) = addr(fullVAddrBits-1, offsetBits) // 32bit
+    def hash1(addr:    UInt) = lineAddr(addr)(32, 26)
+    def hash2(addr:    UInt) = lineAddr(addr)(25, 19)
+    def idx(addr:      UInt) = hash1(addr) ^ hash2(addr)
+    def tag(addr:     UInt) = if(addr.getWidth >= 39) addr(38, 21) else addr
     def cmTableEntry() = new Bundle {
         val valid = Bool()
         val addressHighBits = UInt(cmTagBits.W)
+        // val missTime = UInt(missTimeBits.W)
     }
 
     val cmTable = Module(
         new SRAMTemplate(cmTableEntry(), set = cmTableEntries, way = 1, shouldReset = true, singlePort = true)
     )
 
-    val wAddr = io.w.bits
+    val wAddr = Cat(io.w.bits, 0.U(offsetBits.W))
     cmTable.io.w.req.valid := io.w.valid && !io.r.req.valid
     cmTable.io.w.req.bits.setIdx := idx(wAddr)
     cmTable.io.w.req.bits.data(0).valid := true.B
     cmTable.io.w.req.bits.data(0).addressHighBits := tag(wAddr)
 
-    val rAddr = io.r.req.bits.pfAddr
+    val rAddr = Cat(io.r.req.bits.pfAddr, 0.U(offsetBits.W))
     val rData = Wire(cmTableEntry())
     cmTable.io.r.req.valid := io.r.req.fire
     cmTable.io.r.req.bits.setIdx := idx(rAddr)
@@ -116,35 +126,81 @@ class RecentCacheMissTable(implicit p: Parameters) extends ACDPModule {
     io.w.ready := cmTable.io.w.req.ready && !io.r.req.valid
     io.r.req.ready := true.B
     // io.r.resp.valid := RegNext(cmTable.io.r.req.fire)
-    io.r.resp.bits.ptr := RegNext(io.r.req.bits.ptr)
+    // io.r.resp.bits.ptr := RegNext(io.r.req.bits.ptr)
     io.r.resp.valid := RegNext(cmTable.io.r.req.fire)
     io.r.resp.bits.hit := rData.valid && rData.addressHighBits === RegNext(tag(rAddr))
+
+    class AcdpCmEntry extends Bundle {
+      val readAddressHighBits = UInt(cmTagBits.W)
+    }
+    val l2AcdpCmTable = ChiselDB.createTable("l2AcdpCmTable", new AcdpCmEntry, basicDB = true)
+    val data = Wire(new AcdpCmEntry)
+    data.readAddressHighBits := rData.addressHighBits
+    l2AcdpCmTable.log(data = data, en = io.r.resp.valid, site = "CacheMissTable", clock, reset)
+
+    XSPerfAccumulate(cacheParams, "cmTable_write_times", io.w.fire)
+    XSPerfAccumulate(cacheParams, "cmTable_resp_hit", io.r.resp.bits.hit)
+    XSPerfAccumulate(cacheParams, "cmTable_resp_fire", io.r.resp.fire)
 }
 
-class PointerDataRecognition(implicit p: Parameters) extends ACDPModule {
+class pointerDataQueue[T <: Data](val size: Int)(implicit p: Parameters) extends ACDPModule {
   val io = IO(new Bundle {
-    val train = Flipped(DecoupledIO(new PrefetchTrain))
-    val pointerAddr = Output(UInt(fullVAddrBits.W)) // data of pointer
-    val test = new TestMissAddressBundle
-    val continuousPf = DecoupledIO(new continuousPrefetch)
-    val prefetchDisable = Output(Bool())
+    val in    = Flipped(Decoupled(UInt(blockBytes.W))) 
+    val out    = Decoupled(UInt(blockBytes.W))          
   })
 
-  val pointerAddr = RegInit(0.U(fullVAddrBits.W))
-  val prefetchDisable = RegInit(true.B)
-  val pfdata = io.train.bits.pfdata
-  val hit = io.train.bits.hit
-  val compareHighBits = blockBytes - firstLevelPageNumHighBits - 1
-  val ptr = RegInit(0.U(3.W))
+  val IdxWidth = log2Up(size)
+  val LatencyWidth = log2Up(pdMaxLatency)
+  // class Entry extends Bundle{
+  //   val blockData = UInt(blockBytes.W)
+  //   // val cnt = UInt(LatencyWidth.W)
+  // }
+  val queue = RegInit(VecInit(Seq.fill(size)(0.U(UInt(blockBytes.W)))))
+  val valids = RegInit(VecInit(Seq.fill(size)(false.B)))
+  val head = RegInit(0.U(IdxWidth.W))
+  val tail = RegInit(0.U(IdxWidth.W))
+  val empty = head === tail && !valids.last
+  val full = head === tail && valids.last
+  val outValid = !empty && valids(head)
 
-  require(pfdata.getWidth >= blockBytes * 8)
+  // var setPdLatency = pdMaxLatency
+  when(io.in.valid && !full) {
+    // if queue is full, we drop the new request
+    queue(tail) := io.in.bits
+    // queue(tail).cnt := setPdLatency // dQLatency.U
+    valids(tail) := true.B
+    tail := tail + 1.U
+  }
+
+  when(outValid && io.out.ready) {
+    valids(head) := false.B
+    head := head + 1.U
+  }
+  io.in.ready := true.B
+  io.out.valid := outValid
+  io.out.bits := queue(head)
+
+  // /* Update */
+  // for(i <- 0 until size){
+  //   when(queue(i).cnt.orR){
+  //     queue(i).cnt := queue(i).cnt - 1.U
+  //   }
+  // }
+}
+class prefetchDataSplit(implicit p: Parameters) extends ACDPModule {
+  val io = IO(new Bundle{
+    val pfdata = Flipped(DecoupledIO(UInt((blockBytes * 8).W)))
+    val filterData = DecoupledIO(UInt(blockBytes.W))
+  })
+
+  val compareHighBits = blockBytes - firstLevelPageNumHighBits - 1
+  require(io.pfdata.bits.getWidth >= blockBytes * 8)
   def splitData(pfdata: UInt): Vec[UInt] = {
     val result = VecInit.tabulate(8) { i => 
       pfdata((i + 1) * blockBytes - 1, i * blockBytes)
     }
     result
   }
-
   def filterPoniterData(splited: Vec[UInt]): Vec[UInt] = {
     val filtered = Wire(Vec(splited.size, UInt(blockBytes.W)))
     val filteredCount = Wire(UInt(log2Ceil(splited.size + 1).W))
@@ -152,47 +208,83 @@ class PointerDataRecognition(implicit p: Parameters) extends ACDPModule {
     filteredCount := PopCount(splited.map(num =>(num >> (blockBytes - compareHighBits)) === zeroTop25))
 
     val filteredVec = VecInit((0 until splited.size).map { i =>
-      val sel = (filteredCount > 0.U) && (splited(i)(blockBytes-1, blockBytes-compareHighBits) === zeroTop25)
+      val sel = (filteredCount > 0.U) && (splited(i)(blockBytes-1, blockBytes-compareHighBits) === zeroTop25) //&& (splited(i)(1,0) === 0.U(2.W))
       Mux(sel, splited(i), 0.U((splited(0).getWidth).W))
     })
     filtered := filteredVec
     filtered
   }
-  val splitedData = splitData(pfdata)
+
+  val splitedData = splitData(io.pfdata.bits)
   val filteredData = filterPoniterData(splitedData)
   val firstNonZeroDataIdx = PriorityEncoder(filteredData.map(_ =/= 0.U))
+  val idx = RegInit(0.U(3.W))
+  val validIdx = RegInit(0.U(3.W))
+
+  io.pfdata.ready := true.B
+  io.filterData.valid := (firstNonZeroDataIdx =/= 0.U) || 
+                          (firstNonZeroDataIdx === 0.U && filteredData(0) =/= 0.U(blockBytes.W))
+  io.filterData.bits := filteredData(firstNonZeroDataIdx)
+}
+class PointerDataRecognition(implicit p: Parameters) extends ACDPModule {
+  val io = IO(new Bundle {
+    val train = Flipped(DecoupledIO(new PrefetchTrain))
+    val pointerAddr = Output(UInt(fullVAddrBits.W)) // data of pointer
+    val test = new TestMissAddressBundle
+    val continuousPf = DecoupledIO(new continuousPrefetch)
+    val prefetchDisable = Output(Bool())
+    val pointerAddrValid = Output(Bool())
+  })
+
+  val pointerAddr = RegInit(0.U(fullVAddrBits.W))
+  val prefetchDisable = RegInit(true.B)
+  val pfdata = io.train.bits.pfdata
+  val hit = io.train.bits.hit
   
-  when((firstNonZeroDataIdx =/= 0.U && io.train.fire) || 
-  (firstNonZeroDataIdx === 0.U && io.train.fire && filteredData(0) =/= 0.U)) {
+  // val ptr = RegInit(0.U(3.W))
+  val pointerAddrValid = RegInit(false.B)
+
+  // val pdQueue = Module(new pointerDataQueue(pdQueuelength))
+  val pfDataSplit = Module(new prefetchDataSplit)
+  // val pdQueueIdx = RegInit(0.U(3.W))
+  val pdValid = RegInit(false.B)
+  val filter = RegInit(0.U(blockBytes.W))
+
+  pfDataSplit.io.pfdata.valid := io.train.valid
+  pfDataSplit.io.pfdata.bits := io.train.bits.pfdata
+
+  pfDataSplit.io.filterData.ready := true.B
+  filter := pfDataSplit.io.filterData.bits
+
+  pdValid := io.train.valid && !prefetchDisable
+  // pdQueueIdx := firstNonZeroDataIdx
+  
+  when(pfDataSplit.io.filterData.valid) {
     prefetchDisable := false.B
   }
 
   val s_idle :: s_compare :: Nil = Enum(2)
   val state = RegInit(s_idle)
-  val testPfAdress = filteredData(ptr) 
-  val hitPointerAddr = RegInit(0.U(fullVAddrBits.W))
+  val testPfAdress = filter(fullVAddrBits-1, offsetBits)
 
   when(state === s_idle) {
-    ptr := 0.U
-    state := s_compare
-  }
-  // on every eligible L2 miss, we test the prefetched data with miss data
-  // if prefetched data hits in CM table, this prefetched data could be a pointer data(address) we need to prefetch
-  // The current learning phase finishes at the end of a round when:
-  // (1) one of the cache miss address hit
-  // (2) the number of ptr equals listlength.
-  when(state === s_compare) {
-    when(io.test.req.fire) {
-      val roundFinish = ptr === 7.U
-      ptr := Mux(roundFinish, 0.U, ptr + 1.U)
+    when(pfDataSplit.io.filterData.valid) {
+      state := s_compare
     }
-
-    when(ptr >= 7.U) {
-      state := s_idle  
-    }    
-  } 
-  when(io.test.resp.fire && io.test.resp.bits.hit) {
-      pointerAddr := filteredData(io.test.resp.bits.ptr)
+    pointerAddrValid := false.B
+  }
+  when(state === s_compare) {
+    when(io.test.resp.fire) {
+      when(io.test.resp.bits.hit){
+        pointerAddr := Cat(testPfAdress, 0.U(offsetBits.W))
+        pointerAddrValid := true.B
+        state := s_idle
+      }.elsewhen(!io.test.resp.bits.hit){
+        state := s_idle
+      }
+    }.otherwise{
+      state := s_compare
+    }
   }
 
   val prefetchDepthReg = RegInit(0.U(prefetchDepthBits.W))
@@ -218,22 +310,34 @@ class PointerDataRecognition(implicit p: Parameters) extends ACDPModule {
   io.continuousPf.bits.prefetchDepth := prefetchDepthReg
 
   val disableContinuous = io.train.bits.pfDepth === 0.U && io.train.bits.pfsource === MemReqSource.Prefetch2L2ACDP.id.U
-  io.train.ready := state === s_compare
-  io.pointerAddr := Mux(disableContinuous, 0.U, pointerAddr)
-  io.test.req.valid := state === s_compare && io.train.valid
+  io.train.ready := true.B
+  // io.pointerAddr := Mux(disableContinuous, 0.U, pointerAddr)
+  io.pointerAddr := pointerAddr
+  io.test.req.valid := state === s_compare
   io.test.req.bits.pfAddr := testPfAdress
-  io.test.req.bits.ptr := ptr
+  // io.test.req.bits.ptr := ptr
   io.test.resp.ready := true.B
   io.prefetchDisable := prefetchDisable
+  io.pointerAddrValid := pointerAddrValid
+
+  class AcdpPREntry extends Bundle {
+    val pointerAddr = UInt(fullVAddrBits.W)
+  }
+  val l2AcdpPRTable = ChiselDB.createTable("l2AcdpPRTable", new AcdpPREntry, basicDB = true)
+  for (i <- 0 until REQ_FILTER_SIZE) {
+    val data = Wire(new AcdpPREntry)
+    data.pointerAddr := pointerAddr
+    l2AcdpPRTable.log(data = data, en = io.test.resp.fire && io.test.resp.bits.hit, site = "PointerDataRecognition", clock, reset)
+  }
+  XSPerfAccumulate(cacheParams, "pointerAddrValid", pointerAddrValid)
 }
 
 class AcdpReqBundle(implicit p: Parameters) extends ACDPBundle{
-  val full_vaddr = UInt(fullVAddrBits.W)
+  val pointer_vaddr = UInt(fullVAddrBits.W)
   val needT = Bool()
   val source = UInt(sourceIdBits.W)
   val isACDP = Bool()
   val pfDepth = UInt(2.W)
-  
 }
 
 class AcdpReqBufferEntry(implicit p: Parameters) extends ACDPBundle {
@@ -244,6 +348,7 @@ class AcdpReqBufferEntry(implicit p: Parameters) extends ACDPBundle {
   val paddrNoOffset = UInt(fullVAddrBits.W)
   val replayEn = Bool()
   val replayCnt = UInt(4.W)
+  // for pf req
   val needT = Bool()
   val source = UInt(sourceIdBits.W)
   val pfDepth = UInt(2.W)
@@ -262,13 +367,20 @@ class AcdpReqBufferEntry(implicit p: Parameters) extends ACDPBundle {
   def fromAcdpReqBundle(req: AcdpReqBundle) = {
     valid := true.B
     paddrValid := false.B
-    vaddrNoOffset := get_block_vaddr(req.full_vaddr)
+    vaddrNoOffset := get_block_vaddr(req.pointer_vaddr)
     paddrNoOffset := 0.U
     replayEn := false.B
     replayCnt := 0.U
     needT := req.needT
     source := req.source
     pfDepth := req.pfDepth
+  }
+  
+  def isEqualAcdpReq(req: AcdpReqBundle) = {
+    valid &&
+    vaddrNoOffset === get_block_vaddr(req.pointer_vaddr) &&
+    needT === req.needT &&
+    source === req.source
   }
 
   def toPrefetchReq(): PrefetchReq = {
@@ -318,8 +430,9 @@ class ACDPPrefetchReqBuffer(implicit p: Parameters) extends ACDPModule {
     val out_req = DecoupledIO(new PrefetchReq)
   })
 
-  // val firstTlbReplayCnt = WireInit(Constantin.createRecord("firstTlbReplayCnt", acdpParams.tlbReplayCnt))
-  val firstTlbReplayCnt = acdpParams.tlbReplayCnt.U
+  // val acdpfirstTlbReplayCnt = Constantin.createRecord("AcdpfirstTlbReplayCnt", acdpParams.tlbReplayCnt)
+  val acdpfirstTlbReplayCnt = tlbReplayCnt.U
+
   val entries = Seq.fill(REQ_FILTER_SIZE)(Reg(new(AcdpReqBufferEntry)))
   def wayMap[T <: Data](f: Int => T) = VecInit((0 until REQ_FILTER_SIZE).map(f))
   def get_flag(vaddr: UInt) = get_block_vaddr(vaddr)
@@ -331,16 +444,17 @@ class ACDPPrefetchReqBuffer(implicit p: Parameters) extends ACDPModule {
   io.tlb_req.req_kill := false.B
   io.tlb_req.resp.ready := true.B
   io.out_req <> pf_req_arb.io.out
+  // pf_req_arb.io.out.ready := true.B
 
   /* s0: entries look up */
   val prev_in_valid = RegNext(io.in_req.valid, false.B)
   val prev_in_req = RegEnable(io.in_req.bits, io.in_req.valid)
-  val prev_in_flag = get_flag(prev_in_req.full_vaddr)
+  val prev_in_flag = get_flag(prev_in_req.pointer_vaddr)
   // s1 entry update
   val alloc = Wire(Vec(REQ_FILTER_SIZE, Bool()))
 
   val s0_in_req = io.in_req.bits
-  val s0_in_flag = get_flag(s0_in_req.full_vaddr)
+  val s0_in_flag = get_flag(s0_in_req.pointer_vaddr)
   val s0_conflict_prev = prev_in_valid && s0_in_flag === prev_in_flag
   val s0_match_oh = VecInit(entries.indices.map(i =>
     entries(i).valid && entries(i).vaddrNoOffset === s0_in_flag &&
@@ -386,20 +500,22 @@ class ACDPPrefetchReqBuffer(implicit p: Parameters) extends ACDPModule {
     tlb_fired(i) := s1_tlb_fire_oh(i) && io.tlb_req.resp.valid && !io.tlb_req.resp.bits.miss && !exp_drop(i)
     miss_drop(i) := miss && e.replayEn
     miss_first_replay(i) := miss && !e.replayEn
-    
+
     // old data: update replayCnt
     when(e.valid && e.replayCnt.orR) {
       e.replayCnt := e.replayCnt - 1.U
     }
-    // recent data: update tlb resp
     when(tlb_fired(i)){
       e.update_paddr(io.tlb_req.resp.bits.paddr.head)
-    }.elsewhen(miss_drop(i)) { // miss
+    }
+    when(miss_drop(i)) { // miss
       e.reset(i.U)
-    }.elsewhen(miss_first_replay(i)){
-      e.replayCnt := firstTlbReplayCnt
-      e.replayEn := 1.U
-    }.elsewhen(exp_drop(i)){
+    }
+    when(miss_first_replay(i)){
+      e.replayCnt := acdpfirstTlbReplayCnt
+      e.replayEn := true.B
+    }
+    when(exp_drop(i)){
       e.update_excp()
     }
     // issue data: update pf
@@ -414,7 +530,6 @@ class ACDPPrefetchReqBuffer(implicit p: Parameters) extends ACDPModule {
 
   /* tlb & pf */
   for((e, i) <- entries.zipWithIndex){
-    //tlb_req_arb.io.in(i).valid := e.valid && !s1_tlb_fire_oh(i) && !s2_tlb_fire_oh(i) && !e.paddrValid && !s1_evicted_oh(i)
     tlb_req_arb.io.in(i).valid := e.valid && !e.paddrValid && !s1_tlb_fire_oh(i) && !e.replayCnt.orR
     tlb_req_arb.io.in(i).bits.vaddr := e.get_tlb_vaddr()
     when(e.needT) {
@@ -436,6 +551,16 @@ class ACDPPrefetchReqBuffer(implicit p: Parameters) extends ACDPModule {
       entries(i).reset(i.U)
     }
   }
+
+  class AcdpTlbTestEntry extends Bundle {
+    val tlbVaddr = UInt((fullVAddrBits+offsetBits).W)
+  }
+  val l2AcdpTlbTestTable = ChiselDB.createTable("l2AcdpTlbTestTable", new AcdpTlbTestEntry, basicDB = true)
+  for ((e, i) <- entries.zipWithIndex) {
+    val data = Wire(new AcdpTlbTestEntry)
+    data.tlbVaddr := tlb_req_arb.io.in(i).bits.vaddr
+    l2AcdpTlbTestTable.log(data = data, en = tlb_req_arb.io.in(i).valid, site = "AcdpTlbTest", clock, reset)
+  }
   XSPerfAccumulate(cacheParams, "tlb_req", io.tlb_req.req.valid)
   XSPerfAccumulate(cacheParams, "tlb_miss", io.tlb_req.resp.valid && io.tlb_req.resp.bits.miss)
   XSPerfAccumulate(cacheParams, "tlb_excp",
@@ -449,6 +574,7 @@ class ACDPPrefetchReqBuffer(implicit p: Parameters) extends ACDPModule {
   XSPerfAccumulate(cacheParams, "entry_excp", PopCount(exp_drop))
   XSPerfAccumulate(cacheParams, "entry_merge", io.in_req.valid && s0_match)
   XSPerfAccumulate(cacheParams, "entry_pf_fire", PopCount(pf_fired))
+  XSPerfAccumulate(cacheParams, "tlb_fired", PopCount(tlb_fired))
 }
 class AdvanceContentDirecetdPrefetch(implicit p: Parameters) extends ACDPModule {
   val io = IO(new Bundle {
@@ -461,43 +587,26 @@ class AdvanceContentDirecetdPrefetch(implicit p: Parameters) extends ACDPModule 
   val rcmTable = Module(new RecentCacheMissTable)
   val pdRecognition = Module(new PointerDataRecognition)
 
-  val s0_fire = pdRecognition.io.train.fire
-  val s1_fire = WireInit(false.B)
-  val s0_ready, s1_ready = WireInit(false.B)
+  val pointerAddrValid = pdRecognition.io.pointerAddrValid
 
-  /* s0 train */
-  val s0_pointerVAddr = pdRecognition.io.pointerAddr
+  val pointerVAddr = pdRecognition.io.pointerAddr
   val prefetchDisable = pdRecognition.io.prefetchDisable
   val continuousPf = pdRecognition.io.continuousPf
 
   rcmTable.io.r <> pdRecognition.io.test
   rcmTable.io.w.valid := io.train.fire && !io.train.bits.hit
+  // NOTE: vaddr from l1 to l2 has no offset bits
   rcmTable.io.w.bits := io.train.bits.vaddr.getOrElse(0.U)
   pdRecognition.io.continuousPf.ready := true.B
-  io.train.ready := true.B
-  io.resp.ready := rcmTable.io.w.ready
 
   pdRecognition.io.train <> io.train
-  /* s1 get or send req */
-  val s1_req_valid = RegInit(false.B)
-  val s1_needT = RegEnable(io.train.bits.needT, s0_fire)
-  val s1_source = RegEnable(io.train.bits.source, s0_fire)
-  val s1_pfDepth = RegEnable(continuousPf.bits.prefetchDepth, continuousPf.fire)
-  val s1_pointerVaddr = RegEnable(s0_pointerVAddr, s0_fire)
-
-  // pipeline control signal
-  when(s0_fire) {
-    s1_req_valid := true.B
-  }.elsewhen(s1_fire){
-    s1_req_valid := false.B
-  }
-
-  s0_ready := io.tlb_req.req.ready && s1_ready || !s1_req_valid
-  s1_ready := io.req.ready || !io.req.valid 
-  s1_fire := s1_ready && s1_req_valid
+  val needT = RegEnable(io.train.bits.needT, io.train.fire)
+  val source = RegEnable(io.train.bits.source, io.train.fire)
+  val pfDepth = RegEnable(continuousPf.bits.prefetchDepth, pointerAddrValid)
+  val pointerVaddr = RegEnable(pointerVAddr, pointerAddrValid)
 
   // out value
-  io.resp.ready := rcmTable.io.w.ready
+  io.resp.ready := true.B
   io.tlb_req.resp.ready := true.B
   io.train.ready := true.B
 
@@ -506,12 +615,12 @@ class AdvanceContentDirecetdPrefetch(implicit p: Parameters) extends ACDPModule 
     reqFilter.io.in_req.valid := false.B
     reqFilter.io.in_req.bits := DontCare
   }.otherwise{
-    reqFilter.io.in_req.valid := s1_req_valid
-    reqFilter.io.in_req.bits.full_vaddr := s1_pointerVaddr
-    reqFilter.io.in_req.bits.needT := s1_needT
-    reqFilter.io.in_req.bits.source := s1_source
+    reqFilter.io.in_req.valid := pointerAddrValid
+    reqFilter.io.in_req.bits.pointer_vaddr := pointerVaddr
+    reqFilter.io.in_req.bits.needT := needT
+    reqFilter.io.in_req.bits.source := source
     reqFilter.io.in_req.bits.isACDP := true.B
-    reqFilter.io.in_req.bits.pfDepth := s1_pfDepth
+    reqFilter.io.in_req.bits.pfDepth := pfDepth
   }  
 
   io.tlb_req <> reqFilter.io.tlb_req
@@ -519,5 +628,8 @@ class AdvanceContentDirecetdPrefetch(implicit p: Parameters) extends ACDPModule 
 
   XSPerfAccumulate(cacheParams, "acdp_req", io.req.fire)
   XSPerfAccumulate(cacheParams, "acdp_train", io.train.fire)
+  XSPerfAccumulate(cacheParams, "acdp_resp", io.resp.fire)
+  XSPerfAccumulate(cacheParams, "acdp_drop_for_disable", pdRecognition.io.pointerAddrValid && prefetchDisable)
+  XSPerfAccumulate(cacheParams, "acdp_train_stall_for_tlb_not_ready", io.train.valid && !io.tlb_req.req.ready)
 
 }

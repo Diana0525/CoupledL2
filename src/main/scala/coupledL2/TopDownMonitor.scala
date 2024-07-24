@@ -289,6 +289,7 @@ class TopDownMonitor()(implicit p: Parameters) extends L2Module {
   XSPerfAccumulate(cacheParams, "l2prefetchSentTP", PopCount(l2prefetchSentTP))
   XSPerfAccumulate(cacheParams, "l2prefetchUseful", PopCount(l2prefetchUseful))
   XSPerfAccumulate(cacheParams, "l2prefetchUsefulBOP", PopCount(l2prefetchUsefulBOP))
+  XSPerfAccumulate(cacheParams, "l2prefetchUsefulPBOP", PopCount(l2prefetchUsefulPBOP))
   XSPerfAccumulate(cacheParams, "l2prefetchUsefulACDP", PopCount(l2prefetchUsefulACDP))
   XSPerfAccumulate(cacheParams, "l2prefetchUsefulSMS", PopCount(l2prefetchUsefulSMS))
   XSPerfAccumulate(cacheParams, "l2prefetchUsefulStride", PopCount(l2prefetchUsefulStride))
