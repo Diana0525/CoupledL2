@@ -393,10 +393,6 @@ class MSHR(implicit p: Parameters) extends L2Module {
       prefetch = false.B,
       accessed = true.B
     )
-    mp_grant.aMergeTask.prefetchDepth := merge_task.prefetchDepth
-    // mp_grant.aMergeTask.restartBit := merge_task.restartBit
-    mp_grant.prefetchDepth := merge_task.prefetchDepth
-    // mp_grant.restartBit := merge_task.restartBit
     mp_grant.txChannel := 0.U
     mp_grant
   }

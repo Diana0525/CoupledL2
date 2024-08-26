@@ -227,8 +227,6 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   ms_task.reqSource        := req_s3.reqSource
   ms_task.mergeA           := req_s3.mergeA
   ms_task.aMergeTask       := req_s3.aMergeTask
-  ms_task.prefetchDepth    := req_s3.prefetchDepth
-  // ms_task.restartBit       := req_s3.restartBit
   ms_task.txChannel        := 0.U
   ms_task.snpHitRelease    := false.B
   ms_task.snpHitReleaseWithData := false.B
@@ -277,6 +275,8 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   val hasData_s3 = source_req_s3.opcode(0)
 
   val need_data_a  = dirResult_s3.hit && (req_get_s3 || req_acquireBlock_s3)
+  val need_data_a_s4 = RegNext(need_data_a)
+  val need_data_a_s5 = RegNext(need_data_a_s4)
   val need_data_b  = sinkB_req_s3 && dirResult_s3.hit &&
                        (meta_s3.state === TRUNK || meta_s3.state === TIP && meta_s3.dirty || req_s3.needProbeAckData)
   val need_data_mshr_repl = mshr_refill_s3 && need_repl && !retry
@@ -400,10 +400,8 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   d_s3.valid := task_s3.valid && isD_s3
   c_s3.bits.task      := source_req_s3
   c_s3.bits.data.data := data_s3
-  // c_s3.bits.data.restartBit := DontCare
   d_s3.bits.task      := source_req_s3
   d_s3.bits.data.data := data_s3
-  // d_s3.bits.data.restartBit := DontCare
 
   /* ======== nested & prefetch ======== */
   io.nestedwb.set := req_s3.set
@@ -419,8 +417,10 @@ class MainPipe(implicit p: Parameters) extends L2Module {
     train =>
       // train on request(with needHint flag) miss or hit on prefetched block
       // trigger train also in a_merge here
-      train.valid := task_s3.valid && (((req_acquire_s3 || req_get_s3) && req_s3.needHint.getOrElse(false.B) &&
-        (!dirResult_s3.hit || meta_s3.prefetch.get)) || req_s3.mergeA)
+      train.valid := (task_s3.valid && (((req_acquire_s3 || req_get_s3) && req_s3.needHint.getOrElse(false.B) &&
+        (!dirResult_s3.hit || meta_s3.prefetch.get)) || req_s3.mergeA)) || 
+        (task_s3.valid && task_s3.bits.mshrTask && task_s3.bits.opcode === HintAck && task_s3.bits.dsWen) ||
+        need_data_a_s5
       train.bits.tag := req_s3.tag
       train.bits.set := req_s3.set
       train.bits.needT := Mux(req_s3.mergeA, needT(req_s3.aMergeTask.opcode, req_s3.aMergeTask.param),req_needT_s3)
@@ -430,11 +430,8 @@ class MainPipe(implicit p: Parameters) extends L2Module {
       train.bits.prefetched := Mux(req_s3.mergeA, true.B, meta_s3.prefetch.getOrElse(false.B))
       train.bits.pfsource := meta_s3.prefetchSrc.getOrElse(PfSource.NoWhere.id.U) // TODO
       train.bits.reqsource := req_s3.reqSource
-      train.bits.pfdata := Mux(task_s3.valid && task_s3.bits.mshrTask && task_s3.bits.opcode === HintAck && task_s3.bits.dsWen,
-                              io.refillBufResp_s3.bits.data, 0.U((blockBytes * 8).W))
-      train.bits.pfDepth := req_s3.prefetchDepth
-      // train.bits.restartBit := Mux(task_s3.valid && task_s3.bits.mshrTask && task_s3.bits.opcode === HintAck && task_s3.bits.dsWen,
-      //                         io.refillBufResp_s3.bits.restartBit, false.B)
+      // train.bits.pfdata := Mux(!need_data_a_s5,io.refillBufResp_s3.bits.data, data_s5)
+      train.bits.hit_L2 := need_data_a_s5
   }
 
   /* ======== Stage 4 ======== */
@@ -475,11 +472,11 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   d_s4.valid := c_d_valid_s4 && isD_s4
   c_s4.bits.task := task_s4.bits
   c_s4.bits.data.data := data_s4
-  // c_s4.bits.data.restartBit := DontCare
+
   d_s4.bits.task := task_s4.bits
   d_s4.bits.task.isKeyword.foreach(_ := task_s4.bits.isKeyword.getOrElse(false.B))
   d_s4.bits.data.data := data_s4
-  // d_s4.bits.data.restartBit := DontCare
+
 
   /* ======== Stage 5 ======== */
   val task_s5 = RegInit(0.U.asTypeOf(Valid(new TaskBundle())))
@@ -521,7 +518,6 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   io.releaseBufWrite.valid      := task_s5.valid && need_write_releaseBuf_s5
   io.releaseBufWrite.bits.id    := task_s5.bits.mshrId
   io.releaseBufWrite.bits.data.data := rdata_s5
-  // io.releaseBufWrite.bits.data.restartBit := DontCare
   io.releaseBufWrite.bits.beatMask := Fill(beatSize, true.B)
 
   val c_d_valid_s5 = task_s5.valid && !RegNext(chnl_fire_s4, false.B) && !RegNextN(chnl_fire_s3, 2, Some(false.B))
@@ -529,11 +525,13 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   d_s5.valid := c_d_valid_s5 && isD_s5
   c_s5.bits.task := task_s5.bits
   c_s5.bits.data.data := out_data_s5
-  // c_s5.bits.data.restartBit := DontCare
   d_s5.bits.task := task_s5.bits
   d_s5.bits.data.data := out_data_s5
-  // d_s5.bits.data.restartBit := DontCare
 
+  io.prefetchTrain.foreach {
+    train =>
+      train.bits.pfdata := Mux(!need_data_a_s5,io.refillBufResp_s3.bits.data, data_s5)
+  }
   /* ======== BlockInfo ======== */
   // if s2/s3 might write Dir, we must block s1 sink entrance
   // TODO:[Check] it seems that s3 Dir write will naturally block all s1 by dirRead.ready

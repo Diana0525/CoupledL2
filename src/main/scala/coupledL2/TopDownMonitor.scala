@@ -115,6 +115,9 @@ class TopDownMonitor()(implicit p: Parameters) extends L2Module {
       (r.replacerInfo.reqSource === MemReqSource.Prefetch2L2BOP.id.U ||
        r.replacerInfo.reqSource === MemReqSource.Prefetch2L2PBOP.id.U ||
        r.replacerInfo.reqSource === MemReqSource.Prefetch2L2ACDP.id.U ||
+       r.replacerInfo.reqSource === MemReqSource.Prefetch2L2ACDP_d1.id.U ||
+       r.replacerInfo.reqSource === MemReqSource.Prefetch2L2ACDP_d2.id.U ||
+       r.replacerInfo.reqSource === MemReqSource.Prefetch2L2ACDP_d3.id.U ||
        r.replacerInfo.reqSource === MemReqSource.Prefetch2L2SMS.id.U ||
        r.replacerInfo.reqSource === MemReqSource.Prefetch2L2Stride.id.U ||
        r.replacerInfo.reqSource === MemReqSource.Prefetch2L2Stream.id.U ||
@@ -127,8 +130,30 @@ class TopDownMonitor()(implicit p: Parameters) extends L2Module {
     r => !r.hit && r.replacerInfo.reqSource === MemReqSource.Prefetch2L2PBOP.id.U
   )
   val l2prefetchSentACDP = dirResultMatchVec(
-    r => !r.hit && r.replacerInfo.reqSource === MemReqSource.Prefetch2L2ACDP.id.U
+    r => !r.hit && (r.replacerInfo.reqSource === MemReqSource.Prefetch2L2ACDP.id.U ||
+    r.replacerInfo.reqSource === MemReqSource.Prefetch2L2ACDP_d1.id.U ||
+    r.replacerInfo.reqSource === MemReqSource.Prefetch2L2ACDP_d2.id.U ||
+    r.replacerInfo.reqSource === MemReqSource.Prefetch2L2ACDP_d3.id.U)
   )
+  val l2prefetchSentACDPall = dirResultMatchVec(
+    r => (r.replacerInfo.reqSource === MemReqSource.Prefetch2L2ACDP.id.U ||
+    r.replacerInfo.reqSource === MemReqSource.Prefetch2L2ACDP_d1.id.U ||
+    r.replacerInfo.reqSource === MemReqSource.Prefetch2L2ACDP_d2.id.U ||
+    r.replacerInfo.reqSource === MemReqSource.Prefetch2L2ACDP_d3.id.U)
+  )
+  val l2prefetchSentACDPalld0 = dirResultMatchVec(
+    r => (r.replacerInfo.reqSource === MemReqSource.Prefetch2L2ACDP.id.U)
+  )
+  val l2prefetchSentACDPalld1 = dirResultMatchVec(
+    r => (r.replacerInfo.reqSource === MemReqSource.Prefetch2L2ACDP_d1.id.U)
+  )
+  val l2prefetchSentACDPalld2 = dirResultMatchVec(
+    r => (r.replacerInfo.reqSource === MemReqSource.Prefetch2L2ACDP_d2.id.U)
+  )
+  val l2prefetchSentACDPalld3 = dirResultMatchVec(
+    r =>(r.replacerInfo.reqSource === MemReqSource.Prefetch2L2ACDP_d3.id.U)
+  )
+
   val l2prefetchSentSMS = dirResultMatchVec(
     r => !r.hit && r.replacerInfo.reqSource === MemReqSource.Prefetch2L2SMS.id.U
   )
@@ -155,7 +180,10 @@ class TopDownMonitor()(implicit p: Parameters) extends L2Module {
   )
   val l2prefetchUsefulACDP = dirResultMatchVec(
     r => reqFromCPU(r) && r.hit &&
-      r.meta.prefetch.getOrElse(false.B) && r.meta.prefetchSrc.getOrElse(PfSource.NoWhere.id.U) === PfSource.ACDP.id.U
+      r.meta.prefetch.getOrElse(false.B) && (r.meta.prefetchSrc.getOrElse(PfSource.NoWhere.id.U) === PfSource.ACDP.id.U ||
+      r.meta.prefetchSrc.getOrElse(PfSource.NoWhere.id.U) === PfSource.ACDP_d1.id.U ||
+      r.meta.prefetchSrc.getOrElse(PfSource.NoWhere.id.U) === PfSource.ACDP_d2.id.U ||
+      r.meta.prefetchSrc.getOrElse(PfSource.NoWhere.id.U) === PfSource.ACDP_d3.id.U)
   )
   val l2prefetchUsefulSMS = dirResultMatchVec(
     r => reqFromCPU(r) && r.hit &&
@@ -283,6 +311,11 @@ class TopDownMonitor()(implicit p: Parameters) extends L2Module {
   XSPerfAccumulate(cacheParams, "l2prefetchSent", PopCount(l2prefetchSent))
   XSPerfAccumulate(cacheParams, "l2prefetchSentBOP", PopCount(l2prefetchSentBOP))
   XSPerfAccumulate(cacheParams, "l2prefetchSentACDP", PopCount(l2prefetchSentACDP))
+  XSPerfAccumulate(cacheParams, "l2prefetchSentACDPall", PopCount(l2prefetchSentACDPall))
+  XSPerfAccumulate(cacheParams, "l2prefetchSentACDPalld0", PopCount(l2prefetchSentACDPalld0))
+  XSPerfAccumulate(cacheParams, "l2prefetchSentACDPalld1", PopCount(l2prefetchSentACDPalld1))
+  XSPerfAccumulate(cacheParams, "l2prefetchSentACDPalld2", PopCount(l2prefetchSentACDPalld2))
+  XSPerfAccumulate(cacheParams, "l2prefetchSentACDPalld3", PopCount(l2prefetchSentACDPalld3))
   XSPerfAccumulate(cacheParams, "l2prefetchSentSMS", PopCount(l2prefetchSentSMS))
   XSPerfAccumulate(cacheParams, "l2prefetchSentStride", PopCount(l2prefetchSentStride))
   XSPerfAccumulate(cacheParams, "l2prefetchSentStream", PopCount(l2prefetchSentStream))

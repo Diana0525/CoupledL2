@@ -45,6 +45,9 @@ object PfSource extends Enumeration {
   val Stride  = Value("Stride")
   val TP      = Value("TP")
   val ACDP    = Value("ACDP")
+  val ACDP_d1    = Value("ACDP_d1")
+  val ACDP_d2    = Value("ACDP_d2")
+  val ACDP_d3    = Value("ACDP_d3")
   
   val PfSourceCount = Value("PfSourceCount")
   val pfSourceBits = log2Ceil(PfSourceCount.id)
@@ -57,6 +60,9 @@ object PfSource extends Enumeration {
       is (MemReqSource.Prefetch2L2SMS.id.U) { pfsrc := SMS.id.U }
       is (MemReqSource.Prefetch2L2TP.id.U)  { pfsrc := TP.id.U  }
       is (MemReqSource.Prefetch2L2ACDP.id.U)  { pfsrc := ACDP.id.U  }
+      is (MemReqSource.Prefetch2L2ACDP_d1.id.U)  { pfsrc := ACDP_d1.id.U  }
+      is (MemReqSource.Prefetch2L2ACDP_d2.id.U)  { pfsrc := ACDP_d2.id.U  }
+      is (MemReqSource.Prefetch2L2ACDP_d3.id.U)  { pfsrc := ACDP_d3.id.U  }
       is (MemReqSource.Prefetch2L2Stream.id.U) { pfsrc := Stream.id.U }
       is (MemReqSource.Prefetch2L2Stride.id.U) { pfsrc := Stride.id.U }
     }

@@ -117,19 +117,24 @@ class PrefetchReq(implicit p: Parameters) extends PrefetchBundle {
   val needT = Bool()
   val source = UInt(sourceIdBits.W)
   val pfSource = UInt(MemReqSource.reqSourceBits.W)
-  val pfDepth = UInt(2.W)
 
   def isBOP:Bool = pfSource === MemReqSource.Prefetch2L2BOP.id.U
   def isPBOP:Bool = pfSource === MemReqSource.Prefetch2L2PBOP.id.U
   def isSMS:Bool = pfSource === MemReqSource.Prefetch2L2SMS.id.U
   def isTP:Bool = pfSource === MemReqSource.Prefetch2L2TP.id.U
-  def isACDP:Bool = pfSource === MemReqSource.Prefetch2L2ACDP.id.U
+  def isACDP:Bool = pfSource === MemReqSource.Prefetch2L2ACDP.id.U ||
+                    pfSource === MemReqSource.Prefetch2L2ACDP_d1.id.U ||
+                    pfSource === MemReqSource.Prefetch2L2ACDP_d2.id.U ||
+                    pfSource === MemReqSource.Prefetch2L2ACDP_d3.id.U 
   def needAck:Bool = pfSource === MemReqSource.Prefetch2L2BOP.id.U || pfSource === MemReqSource.Prefetch2L2PBOP.id.U
   def fromL2:Bool =
     pfSource === MemReqSource.Prefetch2L2BOP.id.U ||
     pfSource === MemReqSource.Prefetch2L2SMS.id.U ||
     pfSource === MemReqSource.Prefetch2L2TP.id.U  ||
     pfSource === MemReqSource.Prefetch2L2ACDP.id.U ||
+    pfSource === MemReqSource.Prefetch2L2ACDP_d1.id.U ||
+    pfSource === MemReqSource.Prefetch2L2ACDP_d2.id.U ||
+    pfSource === MemReqSource.Prefetch2L2ACDP_d3.id.U ||
     pfSource === MemReqSource.Prefetch2L2PBOP.id.U
 }
 
@@ -143,13 +148,19 @@ class PrefetchResp(implicit p: Parameters) extends PrefetchBundle {
   def addr = Cat(tag, set, 0.U(offsetBits.W))
   def isBOP: Bool = pfSource === MemReqSource.Prefetch2L2BOP.id.U
   def isPBOP: Bool = pfSource === MemReqSource.Prefetch2L2PBOP.id.U
-  def isACDP: Bool = pfSource ===MemReqSource.Prefetch2L2ACDP.id.U
+  def isACDP: Bool = pfSource ===MemReqSource.Prefetch2L2ACDP.id.U ||
+              pfSource ===MemReqSource.Prefetch2L2ACDP_d1.id.U ||
+              pfSource ===MemReqSource.Prefetch2L2ACDP_d2.id.U ||
+              pfSource ===MemReqSource.Prefetch2L2ACDP_d3.id.U 
   def isSMS: Bool = pfSource === MemReqSource.Prefetch2L2SMS.id.U
   def isTP: Bool = pfSource === MemReqSource.Prefetch2L2TP.id.U
   def fromL2: Bool =
     pfSource === MemReqSource.Prefetch2L2BOP.id.U ||
       pfSource === MemReqSource.Prefetch2L2PBOP.id.U ||
       pfSource === MemReqSource.Prefetch2L2ACDP.id.U ||
+      pfSource ===MemReqSource.Prefetch2L2ACDP_d1.id.U ||
+      pfSource ===MemReqSource.Prefetch2L2ACDP_d2.id.U ||
+      pfSource ===MemReqSource.Prefetch2L2ACDP_d3.id.U ||
       pfSource === MemReqSource.Prefetch2L2SMS.id.U ||
       pfSource === MemReqSource.Prefetch2L2TP.id.U
 }
@@ -165,7 +176,7 @@ class PrefetchTrain(implicit p: Parameters) extends PrefetchBundle {
   val pfsource = UInt(PfSource.pfSourceBits.W)
   val reqsource = UInt(MemReqSource.reqSourceBits.W)
   val pfdata = UInt((blockBytes * 8).W)
-  val pfDepth = UInt(2.W)
+  val hit_L2 = Bool()
 
   def addr: UInt = Cat(tag, set, 0.U(offsetBits.W))
 }
