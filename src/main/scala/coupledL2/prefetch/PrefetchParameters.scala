@@ -41,6 +41,9 @@ object PfSource extends Enumeration {
   val SMS     = Value("SMS")
   val BOP     = Value("BOP")
   val PBOP     = Value("PBOP")
+  val ACDP    = Value("ACDP")
+  val ACDP_d1 = Value("ACDP_d1")
+  val ACDP_d2 = Value("ACDP_d2")
   val Stream  = Value("Stream")
   val Stride  = Value("Stride")
   val TP      = Value("TP")
@@ -53,6 +56,9 @@ object PfSource extends Enumeration {
     switch(s) {
       is (MemReqSource.Prefetch2L2BOP.id.U) { pfsrc := BOP.id.U }
       is (MemReqSource.Prefetch2L2PBOP.id.U) { pfsrc := PBOP.id.U }
+      is (MemReqSource.Prefetch2L2ACDP.id.U) {pfsrc := ACDP.id.U}
+      is (MemReqSource.Prefetch2L2ACDP_d1.id.U) {pfsrc := ACDP_d1.id.U}
+      is (MemReqSource.Prefetch2L2ACDP_d2.id.U) {pfsrc := ACDP_d2.id.U}
       is (MemReqSource.Prefetch2L2SMS.id.U) { pfsrc := SMS.id.U }
       is (MemReqSource.Prefetch2L2TP.id.U)  { pfsrc := TP.id.U  }
       is (MemReqSource.Prefetch2L2Stream.id.U) { pfsrc := Stream.id.U }

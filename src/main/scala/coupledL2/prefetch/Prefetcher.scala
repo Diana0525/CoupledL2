@@ -121,6 +121,9 @@ class PrefetchReq(implicit p: Parameters) extends PrefetchBundle {
   def addr: UInt = Cat(tag, set, 0.U(offsetBits.W))
   def isBOP:Bool = pfSource === MemReqSource.Prefetch2L2BOP.id.U
   def isPBOP:Bool = pfSource === MemReqSource.Prefetch2L2PBOP.id.U
+  def isACDP:Bool = pfSource === MemReqSource.Prefetch2L2ACDP.id.U ||
+                    pfSource === MemReqSource.Prefetch2L2ACDP_d1.id.U ||
+                    pfSource === MemReqSource.Prefetch2L2ACDP_d2.id.U
   def isSMS:Bool = pfSource === MemReqSource.Prefetch2L2SMS.id.U
   def isTP:Bool = pfSource === MemReqSource.Prefetch2L2TP.id.U
   def needAck:Bool = pfSource === MemReqSource.Prefetch2L2BOP.id.U || pfSource === MemReqSource.Prefetch2L2PBOP.id.U
@@ -141,6 +144,9 @@ class PrefetchResp(implicit p: Parameters) extends PrefetchBundle {
   def addr = Cat(tag, set, 0.U(offsetBits.W))
   def isBOP: Bool = pfSource === MemReqSource.Prefetch2L2BOP.id.U
   def isPBOP: Bool = pfSource === MemReqSource.Prefetch2L2PBOP.id.U
+  def isACDP: Bool = pfSource ===MemReqSource.Prefetch2L2ACDP.id.U ||
+              pfSource ===MemReqSource.Prefetch2L2ACDP_d1.id.U ||
+              pfSource ===MemReqSource.Prefetch2L2ACDP_d2.id.U 
   def isSMS: Bool = pfSource === MemReqSource.Prefetch2L2SMS.id.U
   def isTP: Bool = pfSource === MemReqSource.Prefetch2L2TP.id.U
   def fromL2: Bool =
@@ -160,6 +166,8 @@ class PrefetchTrain(implicit p: Parameters) extends PrefetchBundle {
   val prefetched = Bool()
   val pfsource = UInt(PfSource.pfSourceBits.W)
   val reqsource = UInt(MemReqSource.reqSourceBits.W)
+  val pfdata = UInt((blockBytes * 8).W)
+  val hit_L2 = Bool()
 
   def addr: UInt = Cat(tag, set, 0.U(offsetBits.W))
 }
@@ -216,12 +224,14 @@ class PrefetchQueue(implicit p: Parameters) extends PrefetchModule {
   XSPerfAccumulate("prefetch_queue_enq_fromPBOP", io.enq.fire && io.enq.bits.isPBOP)
   XSPerfAccumulate("prefetch_queue_enq_fromSMS", io.enq.fire && io.enq.bits.isSMS)
   XSPerfAccumulate("prefetch_queue_enq_fromTP",  io.enq.fire && io.enq.bits.isTP)
+  XSPerfAccumulate("prefetch_queue_enq_fromACDP", io.enq.fire && io.enq.bits.isACDP)
 
   XSPerfAccumulate("prefetch_queue_deq",         io.deq.fire)
   XSPerfAccumulate("prefetch_queue_deq_fromBOP", io.deq.fire && io.deq.bits.isBOP)
   XSPerfAccumulate("prefetch_queue_deq_fromPBOP", io.deq.fire && io.deq.bits.isPBOP)
   XSPerfAccumulate("prefetch_queue_deq_fromSMS", io.deq.fire && io.deq.bits.isSMS)
   XSPerfAccumulate("prefetch_queue_deq_fromTP",  io.deq.fire && io.deq.bits.isTP)
+  XSPerfAccumulate("prefetch_queue_deq_fromACDP",  io.deq.fire && io.deq.bits.isACDP)
 
   XSPerfHistogram("prefetch_queue_entry", PopCount(valids.asUInt),
     true.B, 0, inflightEntries, 1)
@@ -284,6 +294,13 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
       )))
     })))
   ) else None
+  val acdp = if(hasACDP) Some(
+    Module(new AdvanceContentDirecetdPrefetch()(p.alterPartial({
+      case L2ParamKey => p(L2ParamKey).copy(prefetch = Seq(ACDPParameters()
+      ))
+    }
+    )))
+  ) else None
 
   val tp = if (hasTPPrefetcher) Some(Module(new TemporalPrefetch())) else None
   // prefetch from upper level
@@ -338,7 +355,14 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
 
     tp.get.io.tpmeta_port <> tpio.tpmeta_port.get
   }
-
+  if (hasACDP) {
+    acdp.get.io.req.ready := true.B
+    acdp.get.io.train <> io.train
+    acdp.get.io.train.valid := io.train.valid && (io.train.bits.reqsource =/= MemReqSource.L1DataPrefetch.id.U)
+    acdp.get.io.resp <> io.resp
+    acdp.get.io.resp.valid := io.resp.valid && io.resp.bits.isACDP
+    acdp.get.io.tlb_req <> io.tlb_req
+  }
   // =================== Connection of all Prefetchers =====================
   /* prefetchers -> pftQueue -> pipe -> Slices.SinkA */
 
@@ -346,6 +370,12 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
   val pipe = Module(new Pipeline(io.req.bits.cloneType, 1))
 
   pftQueue.io.enq.valid :=
+    (if (hasReceiver)       pfRcv.get.io.req.valid                         else false.B) ||
+    (l2_pf_en && (
+      (if (hasBOP)          vbop.get.io.req.valid || pbop.get.io.req.valid else false.B) ||
+      (if (hasTPPrefetcher) tp.get.io.req.valid                            else false.B)) ||
+      (if (hasACDP) acdp.get.io.req.valid else false.B)
+    )
     (if (hasReceiver)     pfRcv.get.io.req.valid                         else false.B) ||
     (if (hasBOP)          vbop.get.io.req.valid || pbop.get.io.req.valid else false.B) ||
     (if (hasTPPrefetcher) tp.get.io.req.valid                            else false.B)
@@ -353,7 +383,8 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
     if (hasReceiver)     pfRcv.get.io.req.valid -> pfRcv.get.io.req.bits else false.B -> 0.U.asTypeOf(io.req.bits),
     if (hasBOP)          vbop.get.io.req.valid -> vbop.get.io.req.bits   else false.B -> 0.U.asTypeOf(io.req.bits),
     if (hasBOP)          pbop.get.io.req.valid -> pbop.get.io.req.bits   else false.B -> 0.U.asTypeOf(io.req.bits),
-    if (hasTPPrefetcher) tp.get.io.req.valid -> tp.get.io.req.bits       else false.B -> 0.U.asTypeOf(io.req.bits)
+    if (hasTPPrefetcher) tp.get.io.req.valid -> tp.get.io.req.bits       else false.B -> 0.U.asTypeOf(io.req.bits),
+    if (hasACDP) acdp.get.io.req.valid -> acdp.get.io.req.bits else false.B -> 0.U.asTypeOf(io.req.bits)
   ))
 
   pipe.io.in <> pftQueue.io.deq
@@ -363,11 +394,13 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
   val hasVBOPReq = if (hasBOP) vbop.get.io.req.valid else false.B
   val hasPBOPReq = if (hasBOP) pbop.get.io.req.valid else false.B
   val hasTPReq = if (hasTPPrefetcher) tp.get.io.req.valid else false.B
+  val hasACDPReq = if (hasACDP) acdp.get.io.req.valid else false.B
 
   XSPerfAccumulate("prefetch_req_fromL1", hasReceiverReq)
   XSPerfAccumulate("prefetch_req_fromVBOP", hasVBOPReq)
   XSPerfAccumulate("prefetch_req_fromPBOP", hasPBOPReq)
   XSPerfAccumulate("prefetch_req_fromBOP", hasVBOPReq || hasPBOPReq)
+  XSPerfAccumulate("prefetch_req_fromACDP", hasACDPReq)
   XSPerfAccumulate("prefetch_req_fromTP",  hasTPReq)
 
   XSPerfAccumulate("prefetch_req_selectL1", hasReceiverReq)
@@ -375,8 +408,9 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
   XSPerfAccumulate("prefetch_req_selectPBOP", hasPBOPReq && !hasReceiverReq && !hasVBOPReq)
   XSPerfAccumulate("prefetch_req_selectBOP", (hasPBOPReq || hasVBOPReq) && !hasReceiverReq)
   XSPerfAccumulate("prefetch_req_selectTP", hasTPReq && !hasReceiverReq && !hasVBOPReq && !hasPBOPReq)
+  XSPerfAccumulate("prefetch_req_selectACDP", hasACDPReq && !hasTPReq && !hasReceiverReq && !hasVBOPReq && !hasPBOPReq)
   XSPerfAccumulate("prefetch_req_SMS_other_overlapped",
-    hasReceiverReq && (hasVBOPReq || hasPBOPReq || hasTPReq))
+    hasReceiverReq && (hasVBOPReq || hasPBOPReq || hasTPReq || hasACDPReq))
 
   // NOTE: set basicDB false when debug over
   // TODO: change the enable signal to not target the BOP
