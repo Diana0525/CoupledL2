@@ -451,10 +451,9 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
       // train on request(with needHint flag) miss or hit on prefetched block
       // trigger train also in a_merge here
       train.valid := task_s3.valid && (((req_acquire_s3 || req_get_s3) && req_s3.needHint.getOrElse(false.B) &&
-        (!dirResult_s3.hit || meta_s3.prefetch.get)) || req_s3.mergeA) 
-        // ||
-        // (task_s3.valid && task_s3.bits.mshrTask && task_s3.bits.opcode === HintAck && task_s3.bits.dsWen) ||
-        // need_data_a_s5
+        (!dirResult_s3.hit || meta_s3.prefetch.get)) || req_s3.mergeA) || 
+        (task_s3.valid && task_s3.bits.mshrTask && task_s3.bits.opcode === HintAck && task_s3.bits.dsWen) || 
+        need_data_a_s5
       train.bits.tag := req_s3.tag
       train.bits.set := req_s3.set
       train.bits.needT := Mux(req_s3.mergeA, needT(req_s3.aMergeTask.opcode, req_s3.aMergeTask.param),req_needT_s3)
@@ -465,6 +464,8 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
       train.bits.pfsource := meta_s3.prefetchSrc.getOrElse(PfSource.NoWhere.id.U) // TODO
       train.bits.reqsource := req_s3.reqSource
       train.bits.hit_L2 := need_data_a_s5
+      train.bits.train_for_acdp := (task_s3.valid && task_s3.bits.mshrTask && task_s3.bits.opcode === HintAck && task_s3.bits.dsWen) ||  
+                                    need_data_a_s5
   }
 
   /* ======== Stage 4 ======== */
