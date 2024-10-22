@@ -366,7 +366,7 @@ class TemporalPrefetch(implicit p: Parameters) extends TPModule {
   io.req.bits.pfSource := MemReqSource.Prefetch2L2TP.id.U
 
   io.resp.ready := true.B
-  io.train.ready := resetFinish
+  io.train.ready := resetFinish && !io.train.bits.train_for_acdp
 
 
   /* Performance collection */

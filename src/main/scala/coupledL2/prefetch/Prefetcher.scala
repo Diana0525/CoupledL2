@@ -168,6 +168,7 @@ class PrefetchTrain(implicit p: Parameters) extends PrefetchBundle {
   val reqsource = UInt(MemReqSource.reqSourceBits.W)
   val pfdata = UInt((blockBytes * 8).W)
   val hit_L2 = Bool()
+  val train_for_acdp = Bool()
 
   def addr: UInt = Cat(tag, set, 0.U(offsetBits.W))
 }
@@ -306,6 +307,8 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
   // prefetch from upper level
   val pfRcv = if (hasReceiver) Some(Module(new PrefetchReceiver())) else None
 
+  // =================== Connection for no BOP or ACDP =====================
+  io.tlb_req <> DontCare
   // =================== Connection for each Prefetcher =====================
   // Rcv > VBOP > PBOP > TP
   if (hasBOP) {
@@ -326,6 +329,7 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
     pbop.get.io.train.valid := io.train.valid && (io.train.bits.reqsource =/= MemReqSource.L1DataPrefetch.id.U)
     pbop.get.io.resp <> io.resp
     pbop.get.io.resp.valid := io.resp.valid && io.resp.bits.isPBOP
+    println(s"===========bop=============")
   }
   if (hasReceiver) {
     pfRcv.get.io_enable := pfRcv_en
@@ -344,6 +348,7 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
       pfRcv.get.io.req.bits.pfSource === MemReqSource.Prefetch2L2Stream.id.U ||
       pfRcv.get.io.req.bits.pfSource === MemReqSource.Prefetch2L2Stride.id.U
     )
+    println(s"===========receiver=============")
   }
   if (hasTPPrefetcher) {
     tp.get.io.enable := tp_en
@@ -354,6 +359,7 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
       (if(hasBOP) !vbop.get.io.req.valid && !pbop.get.io.req.valid else true.B)
 
     tp.get.io.tpmeta_port <> tpio.tpmeta_port.get
+    println(s"===========tp=============")
   }
   if (hasACDP) {
     acdp.get.io.req.ready := true.B
@@ -362,6 +368,7 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
     acdp.get.io.resp <> io.resp
     acdp.get.io.resp.valid := io.resp.valid && io.resp.bits.isACDP
     acdp.get.io.tlb_req <> io.tlb_req
+    println(s"===========acdp=============")
   }
   // =================== Connection of all Prefetchers =====================
   /* prefetchers -> pftQueue -> pipe -> Slices.SinkA */

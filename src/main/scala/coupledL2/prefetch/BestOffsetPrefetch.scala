@@ -693,9 +693,9 @@ class VBestOffsetPrefetch(implicit p: Parameters) extends BOPModule {
 
   rrTable.io.r <> scoreTable.io.test
   rrTable.io.w <> delayQueue.io.out
-  delayQueue.io.in.valid := io.train.valid
+  delayQueue.io.in.valid := io.train.valid && !io.train.bits.train_for_acdp
   delayQueue.io.in.bits := s0_oldFullAddrNoOff
-  scoreTable.io.req.valid := io.train.valid
+  scoreTable.io.req.valid := io.train.valid && !io.train.bits.train_for_acdp
   scoreTable.io.req.bits := s0_oldFullAddr
 
   /* s1 get or send req */
@@ -728,7 +728,7 @@ class VBestOffsetPrefetch(implicit p: Parameters) extends BOPModule {
   }
 
   // out value
-  io.train.ready := delayQueue.io.in.ready && scoreTable.io.req.ready && s0_ready
+  io.train.ready := delayQueue.io.in.ready && scoreTable.io.req.ready && s0_ready && !io.train.bits.train_for_acdp
   io.resp.ready := rrTable.io.w.ready
   io.tlb_req.resp.ready := true.B
 
@@ -776,9 +776,9 @@ class VBestOffsetPrefetch(implicit p: Parameters) extends BOPModule {
   XSPerfAccumulate("bop_req", io.req.fire)
   XSPerfAccumulate("bop_train", io.train.fire)
   XSPerfAccumulate("bop_resp", io.resp.fire)
-  XSPerfAccumulate("bop_train_stall_for_st_not_ready", io.train.valid && !scoreTable.io.req.ready)
+  XSPerfAccumulate("bop_train_stall_for_st_not_ready", io.train.valid && !io.train.bits.train_for_acdp && !scoreTable.io.req.ready)
   if(virtualTrain){
-    XSPerfAccumulate("bop_train_stall_for_tlb_not_ready", io.train.valid && !io.tlb_req.req.ready)
+    XSPerfAccumulate("bop_train_stall_for_tlb_not_ready", io.train.valid && !io.train.bits.train_for_acdp && !io.tlb_req.req.ready)
     // XSPerfAccumulate("bop_req_drop", out_drop_req)
   }else{
     XSPerfAccumulate("bop_cross_page", scoreTable.io.req.fire && s0_crossPage)
@@ -811,9 +811,9 @@ class PBestOffsetPrefetch(implicit p: Parameters) extends BOPModule {
 
   rrTable.io.r <> scoreTable.io.test
   rrTable.io.w <> delayQueue.io.out
-  delayQueue.io.in.valid := io.train.valid
+  delayQueue.io.in.valid := io.train.valid && !io.train.bits.train_for_acdp
   delayQueue.io.in.bits := oldAddrNoOff
-  scoreTable.io.req.valid := io.train.valid
+  scoreTable.io.req.valid := io.train.valid && !io.train.bits.train_for_acdp
   scoreTable.io.req.bits := oldAddr
 
   val req = Reg(new PrefetchReq)
@@ -834,7 +834,7 @@ class PBestOffsetPrefetch(implicit p: Parameters) extends BOPModule {
   io.req.valid := enable && req_valid
   io.req.bits := req
   io.req.bits.pfSource := MemReqSource.Prefetch2L2PBOP.id.U
-  io.train.ready := delayQueue.io.in.ready && scoreTable.io.req.ready && (!req_valid || io.req.ready)
+  io.train.ready := delayQueue.io.in.ready && scoreTable.io.req.ready && (!req_valid || io.req.ready) && !io.train.bits.train_for_acdp
   io.resp.ready := rrTable.io.w.ready
 
   for (off <- offsetList) {
@@ -847,7 +847,7 @@ class PBestOffsetPrefetch(implicit p: Parameters) extends BOPModule {
   XSPerfAccumulate("bop_req", io.req.fire)
   XSPerfAccumulate("bop_train", io.train.fire)
   XSPerfAccumulate("bop_resp", io.resp.fire)
-  XSPerfAccumulate("bop_train_stall_for_st_not_ready", io.train.valid && !scoreTable.io.req.ready)
+  XSPerfAccumulate("bop_train_stall_for_st_not_ready", io.train.valid && !io.train.bits.train_for_acdp && !scoreTable.io.req.ready)
   XSPerfAccumulate("bop_drop_for_cross_page", scoreTable.io.req.fire && crossPage)
   XSPerfAccumulate("bop_drop_for_disable", scoreTable.io.req.fire && prefetchDisable)
 }

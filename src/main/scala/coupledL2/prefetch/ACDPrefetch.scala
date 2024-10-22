@@ -16,10 +16,11 @@ case class ACDPParameters(
     secondLevelPageNumHighBits: Int = 29,
     secondLevelPageNumLowBits: Int = 21,
     tlbReplayCnt:   Int = 10,
-    tagLength:      Int = 18,
     paQEntries: Int = 64,
     paQLatency: Int = 32,
     paQMaxLatency: Int = 256,
+    missTimeThreshold: Int = 8,
+    missTimeTableEntries: Int = 128
   )
     extends PrefetchParameters {
   override val hasPrefetchBit:  Boolean = true
@@ -34,6 +35,7 @@ trait HasACDPParams extends HasPrefetcherHelper {
     }.get.asInstanceOf[ACDPParameters]
 
     def cmTableEntries = acdpParams.cmTableEntries
+    def cmTableIndex = log2Up(acdpParams.cmTableEntries)
     def cmTagBits = acdpParams.cmTagBits
     def inflightEntries = acdpParams.inflightEntries
 
@@ -41,15 +43,18 @@ trait HasACDPParams extends HasPrefetcherHelper {
     def firstLevelPageNumLowBits = acdpParams.firstLevelPageNumLowBits
     def secondLevelPageNumHighBits = acdpParams.secondLevelPageNumHighBits
     def secondLevelPageNumLowBits = acdpParams.secondLevelPageNumLowBits
-    def tagLength = acdpParams.tagLength
 
     def tlbReplayCnt = acdpParams.tlbReplayCnt
 
     def paQEntries = acdpParams.paQEntries
     def paQLatency = acdpParams.paQEntries
     def paQMaxLatency = acdpParams.paQMaxLatency
+    
+    def missTimeBits = log2Up(acdpParams.missTimeTableEntries)
+    def missTimeTableEntries = acdpParams.missTimeTableEntries
+    def missTimeThreshold = acdpParams.missTimeThreshold
+    def missTimeTableindex = log2Up(acdpParams.missTimeTableEntries)
 }
-
 abstract class ACDPBundle(implicit val p: Parameters) extends Bundle with HasACDPParams
 abstract class ACDPModule(implicit val p: Parameters) extends Module with HasACDPParams
 
@@ -78,52 +83,76 @@ class RecentCacheMissTable(implicit p: Parameters) extends ACDPModule {
     })
     // RCM table is direct mapped, accessed through high 18 bits of address,
     // each entry holding high 18 bits of address.
-    def lineAddr(addr: UInt) = addr(fullVAddrBits-1, offsetBits) // 33bit
-    def hash1(addr:    UInt) = lineAddr(addr)(32, 26)
-    def hash2(addr:    UInt) = lineAddr(addr)(25, 19)
-    def idx(addr:      UInt) = hash1(addr) ^ hash2(addr)
-    def tag(addr:     UInt) = if(addr.getWidth >= 39) addr(38, 21) else addr
+    // def lineAddr(addr: UInt) = addr(fullVAddrBits-1, offsetBits) // 33bit
+    // def hash1(addr:    UInt) = lineAddr(addr)(32, 26)
+    // def hash2(addr:    UInt) = lineAddr(addr)(25, 19)
+    // def idx(addr:      UInt) = hash1(addr) ^ hash2(addr)
+    def idx(addr:     UInt) = addr(addr.getWidth-1, addr.getWidth-cmTableIndex)
+    def tag(addr:     UInt) = addr(addr.getWidth-1, addr.getWidth-cmTagBits)
+
     def cmTableEntry() = new Bundle {
         val valid = Bool()
         val addressHighBits = UInt(cmTagBits.W)
-        // val missTime = UInt(missTimeBits.W)
+        val missTime = UInt(missTimeBits.W)
     }
+
+    def missHotTableEntry() = new Bundle {
+        val valid = Bool()
+        val addressHighBits = UInt(cmTagBits.W)
+    }
+
+    val missHotTable = Module(
+        new SRAMTemplate(missHotTableEntry(), set = missTimeTableEntries, way = 1, shouldReset = true, singlePort = true)
+    )
 
     val cmTable = Module(
         new SRAMTemplate(cmTableEntry(), set = cmTableEntries, way = 1, shouldReset = true, singlePort = true)
     )
 
-    val wAddr = Cat(io.w.bits, 0.U(offsetBits.W))
+    val wAddr = RegEnable(Cat(io.w.bits, 0.U(offsetBits.W)), io.w.fire)
+    val rAddr = RegEnable(Cat(io.r.req.bits.pfAddr, 0.U(offsetBits.W)), io.r.req.fire)
+    val rData = Wire(cmTableEntry())
+
+    val readcmTable = io.w.valid
+    val writecmTable = RegNext(io.w.valid)
+    // s1: read cmTable
+    cmTable.io.r.req.valid := readcmTable
+    cmTable.io.r.req.bits.setIdx := idx(wAddr)
+    rData := cmTable.io.r.resp.data(0)
+
+    // s2: write cmTable and write missHotTable
     cmTable.io.w.req.valid := io.w.valid && !io.r.req.valid
     cmTable.io.w.req.bits.setIdx := idx(wAddr)
     cmTable.io.w.req.bits.data(0).valid := true.B
     cmTable.io.w.req.bits.data(0).addressHighBits := tag(wAddr)
+    cmTable.io.w.req.bits.data(0).missTime := Mux(rData.addressHighBits === tag(wAddr), rData.missTime + 1.U, 0.U)
 
-    val rAddr = Cat(io.r.req.bits.pfAddr, 0.U(offsetBits.W))
-    val rData = Wire(cmTableEntry())
-    cmTable.io.r.req.valid := io.r.req.fire
-    cmTable.io.r.req.bits.setIdx := idx(rAddr)
-    rData := cmTable.io.r.resp.data(0)
-    assert(!RegNext(io.w.fire && io.r.req.fire), "single port SRAM should not read and write at the same time")
+    var setMissTimeThreshold = Constantin.createRecord("MissTimeThreshold", missTimeThreshold)
+    val writeHotMissTable = rData.missTime >= setMissTimeThreshold
+    missHotTable.io.w.req.valid := writeHotMissTable
+    missHotTable.io.w.req.bits.setIdx := idx(wAddr)
+    missHotTable.io.w.req.bits.data(0).valid := true.B
+    missHotTable.io.w.req.bits.data(0).addressHighBits := rData.addressHighBits
+    
+    // read missHotTable when io.r.req.valid
+    val rDataMH = Wire(missHotTableEntry)
+    missHotTable.io.r.req.valid := io.r.req.valid && !missHotTable.io.w.req.valid
+    missHotTable.io.r.req.bits.setIdx := idx(rAddr)
+    rDataMH := missHotTable.io.r.resp.data(0)
+    
+    // assert(!RegNext(io.w.fire && io.r.req.fire), "single port SRAM should not read and write at the same time")
 
-    io.w.ready := cmTable.io.w.req.ready && !io.r.req.valid
+    io.w.ready := cmTable.io.w.req.ready
     io.r.req.ready := true.B
-    // io.r.resp.bits.ptr := RegNext(io.r.req.bits.ptr)
-    io.r.resp.valid := RegNext(cmTable.io.r.req.fire)
-    io.r.resp.bits.hit := rData.valid && rData.addressHighBits === RegNext(tag(rAddr))
 
-    class AcdpCmEntry extends Bundle {
-      val readAddressHighBits = UInt(cmTagBits.W)
-    }
-    val l2AcdpCmTable = ChiselDB.createTable("l2AcdpCmTable", new AcdpCmEntry, basicDB = true)
-    val data = Wire(new AcdpCmEntry)
-    data.readAddressHighBits := rData.addressHighBits
-    l2AcdpCmTable.log(data = data, en = io.r.resp.valid, site = "CacheMissTable", clock, reset)
+    io.r.resp.valid := RegNext(missHotTable.io.r.req.fire)
+    io.r.resp.bits.hit := rDataMH.valid && rDataMH.addressHighBits === RegNext(tag(rAddr))
 
-    XSPerfAccumulate("cmTable_write_times", io.w.fire)
-    XSPerfAccumulate("cmTable_resp_hit", io.r.resp.bits.hit)
-    XSPerfAccumulate("cmTable_resp_fire", io.r.resp.fire)
+    XSPerfAccumulate("misshotTable_resp_hit", io.r.resp.bits.hit)
+    XSPerfAccumulate("misshotTable_resp_fire", io.r.resp.fire)
+    XSPerfAccumulate("cmTable_hash_conflict", RegNext(cmTable.io.r.req.fire) && rData.addressHighBits =/= tag(wAddr))
 }
+
 class PointerAddrQueue(implicit p: Parameters) extends ACDPModule{
   val io = IO(new Bundle(){
     val in = Flipped(DecoupledIO(UInt(fullVAddrBits.W)))
@@ -171,11 +200,11 @@ class PointerAddrQueue(implicit p: Parameters) extends ACDPModule{
   }
 
   /* Perf */
-  XSPerfAccumulate("paQ:full", full)
-  XSPerfAccumulate("paQ:empty", empty)
-  XSPerfAccumulate("paQ:entryNumber", PopCount(valids.asUInt))
-  XSPerfAccumulate("paQ:inNumber", io.in.valid)
-  XSPerfAccumulate("paQ:outNumber", io.out.valid)
+  XSPerfAccumulate("paQ_full", full)
+  XSPerfAccumulate("paQ_empty", empty)
+  XSPerfAccumulate("paQ_entryNumber", PopCount(valids.asUInt))
+  XSPerfAccumulate("paQ_inNumber", io.in.valid)
+  XSPerfAccumulate("paQ_outNumber", io.out.valid)
 
 }
 class prefetchDataSplit(implicit p: Parameters) extends ACDPModule {
@@ -199,7 +228,7 @@ class prefetchDataSplit(implicit p: Parameters) extends ACDPModule {
     filteredCount := PopCount(splited.map(num =>(num >> (blockBytes - compareHighBits)) === zeroTop25))
 
     val filteredVec = VecInit((0 until splited.size).map { i =>
-      val sel = (filteredCount > 0.U) && (splited(i)(blockBytes-1, blockBytes-compareHighBits) === zeroTop25) //&& (splited(i)(1,0) === 0.U(2.W))
+      val sel = (filteredCount > 0.U) && ((splited(i)(1,0) === 0.U(2.W) && splited(i)(blockBytes-1, blockBytes-compareHighBits) === zeroTop25))
       Mux(sel, splited(i), 0.U((splited(0).getWidth).W))
     })
     filtered := filteredVec
@@ -255,8 +284,6 @@ class PointerDataRecognition(implicit p: Parameters) extends ACDPModule {
   val prefetchDisable = RegInit(true.B)
   val pfdata = io.train.bits.pfdata
 
-  val pointerAddrValid = RegInit(false.B)
-
   val pfDataSplit = Module(new prefetchDataSplit)
   val paQueue = Module(new PointerAddrQueue)
   val filter = RegInit(0.U(blockBytes.W))
@@ -284,13 +311,15 @@ class PointerDataRecognition(implicit p: Parameters) extends ACDPModule {
     when(paQueue.io.out.valid) {
       state := s_compare
     }
-    pointerAddrValid := false.B
+    // pointerAddrValid := false.B
   }
+
+  val pointerAddrValid = io.test.resp.fire && io.test.resp.bits.hit
   when(state === s_compare) {
     when(io.test.resp.fire) {
       when(io.test.resp.bits.hit){
         pointerAddr := Cat(testPfAdress, 0.U(offsetBits.W))
-        pointerAddrValid := true.B
+        // pointerAddrValid := true.B
         state := s_idle
       }.elsewhen(!io.test.resp.bits.hit){
         state := s_idle
@@ -574,6 +603,7 @@ class ACDPPrefetchReqBuffer(implicit p: Parameters) extends ACDPModule {
   XSPerfAccumulate("entry_pf_fire", PopCount(pf_fired))
   XSPerfAccumulate("tlb_fired", PopCount(tlb_fired))
 }
+
 class AdvanceContentDirecetdPrefetch(implicit p: Parameters) extends ACDPModule {
   val io = IO(new Bundle {
     val train = Flipped(DecoupledIO(new PrefetchTrain))
@@ -632,6 +662,6 @@ class AdvanceContentDirecetdPrefetch(implicit p: Parameters) extends ACDPModule 
   XSPerfAccumulate("acdp_resp", io.resp.fire)
   XSPerfAccumulate("acdp_drop_for_disable", pdRecognition.io.pointerAddrValid && prefetchDisable)
   XSPerfAccumulate("acdp_train_stall_for_tlb_not_ready", io.train.valid && !io.tlb_req.req.ready)
-  XSPerfAccumulate("train pfsrc is acdp", io.train.valid && io.train.bits.pfsource === PfSource.ACDP.id.U)
-  XSPerfAccumulate("hit in L2", io.train.valid && io.train.bits.hit_L2)
+  XSPerfAccumulate("train_pfsrc_is_acdp", io.train.valid && io.train.bits.pfsource === PfSource.ACDP.id.U)
+  XSPerfAccumulate("hit_in_L2", io.train.valid && io.train.bits.hit_L2)
 }
