@@ -169,7 +169,8 @@ class PrefetchTrain(implicit p: Parameters) extends PrefetchBundle {
   val pfdata = UInt((blockBytes * 8).W)
   val hit_L2 = Bool()
   val train_for_acdp = Bool()
-
+  val train_nofor_acdp = Bool()
+  
   def addr: UInt = Cat(tag, set, 0.U(offsetBits.W))
 }
 
@@ -307,8 +308,9 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
   // prefetch from upper level
   val pfRcv = if (hasReceiver) Some(Module(new PrefetchReceiver())) else None
 
-  // =================== Connection for no BOP or ACDP =====================
-  io.tlb_req <> DontCare
+  if (!hasBOP && !hasACDP) {
+    io.tlb_req <> DontCare
+  }
   // =================== Connection for each Prefetcher =====================
   // Rcv > VBOP > PBOP > TP
   if (hasBOP) {

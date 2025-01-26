@@ -10,7 +10,7 @@ import coupledL2.{HasCoupledL2Parameters, L2TlbReq, L2ToL1TlbIO, TlbCmd}
 
 case class ACDPParameters(
     cmTableEntries: Int = 128,
-    cmTagBits: Int = 18,
+    cmTagBits: Int = 28,
     firstLevelPageNumHighBits: Int = 38,
     firstLevelPageNumLowBits: Int = 30,
     secondLevelPageNumHighBits: Int = 29,
@@ -83,10 +83,6 @@ class RecentCacheMissTable(implicit p: Parameters) extends ACDPModule {
     })
     // RCM table is direct mapped, accessed through high 18 bits of address,
     // each entry holding high 18 bits of address.
-    // def lineAddr(addr: UInt) = addr(fullVAddrBits-1, offsetBits) // 33bit
-    // def hash1(addr:    UInt) = lineAddr(addr)(32, 26)
-    // def hash2(addr:    UInt) = lineAddr(addr)(25, 19)
-    // def idx(addr:      UInt) = hash1(addr) ^ hash2(addr)
     def idx(addr:     UInt) = addr(addr.getWidth-1, addr.getWidth-cmTableIndex)
     def tag(addr:     UInt) = addr(addr.getWidth-1, addr.getWidth-cmTagBits)
 
@@ -213,7 +209,7 @@ class prefetchDataSplit(implicit p: Parameters) extends ACDPModule {
     val filterData = DecoupledIO(UInt(blockBytes.W))
   })
 
-  val compareHighBits = blockBytes - firstLevelPageNumHighBits - 1
+  val compareHighBits = blockBytes - fullVAddrBits
   require(io.pfdata.bits.getWidth >= blockBytes * 8)
   def splitData(pfdata: UInt): Vec[UInt] = {
     val result = VecInit.tabulate(8) { i => 
@@ -221,14 +217,15 @@ class prefetchDataSplit(implicit p: Parameters) extends ACDPModule {
     }
     result
   }
+
   def filterPoniterData(splited: Vec[UInt]): Vec[UInt] = {
     val filtered = Wire(Vec(splited.size, UInt(blockBytes.W)))
     val filteredCount = Wire(UInt(log2Ceil(splited.size + 1).W))
-    val zeroTop25 = 0.U(compareHighBits.W)
-    filteredCount := PopCount(splited.map(num =>(num >> (blockBytes - compareHighBits)) === zeroTop25))
+    val zeroTop = 0.U(compareHighBits.W)
+    filteredCount := PopCount(splited.map(num =>(num >> (blockBytes - compareHighBits)) === zeroTop))
 
     val filteredVec = VecInit((0 until splited.size).map { i =>
-      val sel = (filteredCount > 0.U) && ((splited(i)(1,0) === 0.U(2.W) && splited(i)(blockBytes-1, blockBytes-compareHighBits) === zeroTop25))
+      val sel = (filteredCount > 0.U) && ((splited(i)(1,0) === 0.U(2.W) && splited(i)(blockBytes-1, blockBytes-compareHighBits) === zeroTop))
       Mux(sel, splited(i), 0.U((splited(0).getWidth).W))
     })
     filtered := filteredVec
@@ -623,7 +620,7 @@ class AdvanceContentDirecetdPrefetch(implicit p: Parameters) extends ACDPModule 
   val prefetchDisable = pdRecognition.io.prefetchDisable
 
   rcmTable.io.r <> pdRecognition.io.test
-  rcmTable.io.w.valid := io.train.valid && !io.train.bits.hit && io.train.bits.vaddr.getOrElse(0.U) =/= 0.U((fullVAddrBits-offsetBits).W)
+  rcmTable.io.w.valid := io.train.valid /*&& !io.train.bits.hit*/ && io.train.bits.vaddr.getOrElse(0.U) =/= 0.U((fullVAddrBits-offsetBits).W)
   // NOTE: vaddr from l1 to l2 has no offset bits
   rcmTable.io.w.bits := io.train.bits.vaddr.getOrElse(0.U)
 
