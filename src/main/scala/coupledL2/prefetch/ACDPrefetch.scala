@@ -76,77 +76,168 @@ class TrainData(implicit p: Parameters) extends ACDPBundle {
   val pfdata = UInt((blockBytes * 8).W)
 }
 
-class RecentCacheMissTable(implicit p: Parameters) extends ACDPModule {
-    val io = IO(new Bundle {
-        val w = Flipped(DecoupledIO(UInt((fullVAddrBits-offsetBits).W)))
-        val r = Flipped(new TestMissAddressBundle)
-    })
-    // RCM table is direct mapped, accessed through high 18 bits of address,
-    // each entry holding high 18 bits of address.
-    def idx(addr:     UInt) = addr(addr.getWidth-1, addr.getWidth-cmTableIndex)
+// class RecentCacheMissTable(implicit p: Parameters) extends ACDPModule {
+//     val io = IO(new Bundle {
+//         val w = Flipped(DecoupledIO(UInt((fullVAddrBits-offsetBits).W)))
+//         val r = Flipped(new TestMissAddressBundle)
+//     })
+//     // RCM table is direct mapped, accessed through high 18 bits of address,
+//     // each entry holding high 18 bits of address.
+//     def idx(addr:     UInt) = addr(addr.getWidth-1, addr.getWidth-cmTableIndex)
+//     def tag(addr:     UInt) = addr(addr.getWidth-1, addr.getWidth-cmTagBits)
+
+//     def cmTableEntry() = new Bundle {
+//         val valid = Bool()
+//         val addressHighBits = UInt(cmTagBits.W)
+//         val missTime = UInt(missTimeBits.W)
+//     }
+
+//     def missHotTableEntry() = new Bundle {
+//         val valid = Bool()
+//         val addressHighBits = UInt(cmTagBits.W)
+//     }
+
+//     val missHotTable = Module(
+//         new SRAMTemplate(missHotTableEntry(), set = missTimeTableEntries, way = 1, shouldReset = true, singlePort = true)
+//     )
+
+//     val cmTable = Module(
+//         new SRAMTemplate(cmTableEntry(), set = cmTableEntries, way = 1, shouldReset = true, singlePort = true)
+//     )
+
+//     val wAddr = RegEnable(Cat(io.w.bits, 0.U(offsetBits.W)), io.w.fire)
+//     val rAddr = RegEnable(Cat(io.r.req.bits.pfAddr, 0.U(offsetBits.W)), io.r.req.fire)
+//     val rData = Wire(cmTableEntry())
+
+//     val readcmTable = io.w.valid
+//     val writecmTable = RegNext(io.w.valid)
+//     // s1: read cmTable
+//     cmTable.io.r.req.valid := readcmTable
+//     cmTable.io.r.req.bits.setIdx := idx(wAddr)
+//     rData := cmTable.io.r.resp.data(0)
+
+//     // s2: write cmTable and write missHotTable
+//     cmTable.io.w.req.valid := io.w.valid && !io.r.req.valid
+//     cmTable.io.w.req.bits.setIdx := idx(wAddr)
+//     cmTable.io.w.req.bits.data(0).valid := true.B
+//     cmTable.io.w.req.bits.data(0).addressHighBits := tag(wAddr)
+//     cmTable.io.w.req.bits.data(0).missTime := Mux(rData.addressHighBits === tag(wAddr), rData.missTime + 1.U, 0.U)
+
+//     var setMissTimeThreshold = Constantin.createRecord("MissTimeThreshold", missTimeThreshold)
+//     val writeHotMissTable = rData.missTime >= setMissTimeThreshold
+//     missHotTable.io.w.req.valid := writeHotMissTable
+//     missHotTable.io.w.req.bits.setIdx := idx(wAddr)
+//     missHotTable.io.w.req.bits.data(0).valid := true.B
+//     missHotTable.io.w.req.bits.data(0).addressHighBits := rData.addressHighBits
+    
+//     // read missHotTable when io.r.req.valid
+//     val rDataMH = Wire(missHotTableEntry)
+//     missHotTable.io.r.req.valid := io.r.req.valid && !missHotTable.io.w.req.valid
+//     missHotTable.io.r.req.bits.setIdx := idx(rAddr)
+//     rDataMH := missHotTable.io.r.resp.data(0)
+    
+//     // assert(!RegNext(io.w.fire && io.r.req.fire), "single port SRAM should not read and write at the same time")
+
+//     io.w.ready := cmTable.io.w.req.ready
+//     io.r.req.ready := true.B
+
+//     io.r.resp.valid := RegNext(missHotTable.io.r.req.fire)
+//     io.r.resp.bits.hit := rDataMH.valid && rDataMH.addressHighBits === RegNext(tag(rAddr))
+
+//     XSPerfAccumulate("misshotTable_resp_hit", io.r.resp.bits.hit)
+//     XSPerfAccumulate("misshotTable_resp_fire", io.r.resp.fire)
+//     XSPerfAccumulate("cmTable_hash_conflict", RegNext(cmTable.io.r.req.fire) && rData.addressHighBits =/= tag(wAddr))
+// }
+
+class RCMTableEntry(implicit p: Parameters) extends ACDPBundle {
+  val valid = Bool()
+  val lru = UInt(cmTableIndex.W)
+  val addressHighBits = UInt(cmTagBits.W)
+
+  def reset() = {
+      valid := false.B
+      lru := (cmTableEntries - 1).U
+      addressHighBits := DontCare
+  }
+}
+class RCMTable(implicit p: Parameters) extends ACDPModule {
+  val io = IO(new Bundle {
+      val w = Flipped(DecoupledIO(UInt((fullVAddrBits-offsetBits).W)))
+      val r = Flipped(new TestMissAddressBundle)
+  })
+
+    val table = RegInit(
+      VecInit.fill(cmTableEntries)({
+        val initRCMTableEntry = Wire(new RCMTableEntry)
+        initRCMTableEntry.reset()
+        initRCMTableEntry
+      }))
+
+    def updatelru(idx:UInt) = {
+      val lru = table(idx).lru
+      for (i <- 0 until cmTableEntries) {
+        when(table(i).lru < lru) {
+          table(i).lru := table(i).lru + 1.U
+        }
+      }
+      table(idx).lru := 0.U
+    }
+
+    def updatereadlru(idx:UInt) = {
+      val lru = table(idx).lru
+      for (i <- 0 until cmTableEntries) {
+        when(table(i).lru < lru) {
+          table(i).lru := table(i).lru + 1.U
+        }
+      }
+      table(idx).lru := 0.U
+    }
+
+    def sameHighAddress(addr1:UInt, addr2:UInt) = {
+      addr1(cmTagBits-1, 0) === addr2(cmTagBits-1, 0)
+    }
+
     def tag(addr:     UInt) = addr(addr.getWidth-1, addr.getWidth-cmTagBits)
-
-    def cmTableEntry() = new Bundle {
-        val valid = Bool()
-        val addressHighBits = UInt(cmTagBits.W)
-        val missTime = UInt(missTimeBits.W)
-    }
-
-    def missHotTableEntry() = new Bundle {
-        val valid = Bool()
-        val addressHighBits = UInt(cmTagBits.W)
-    }
-
-    val missHotTable = Module(
-        new SRAMTemplate(missHotTableEntry(), set = missTimeTableEntries, way = 1, shouldReset = true, singlePort = true)
-    )
-
-    val cmTable = Module(
-        new SRAMTemplate(cmTableEntry(), set = cmTableEntries, way = 1, shouldReset = true, singlePort = true)
-    )
-
     val wAddr = RegEnable(Cat(io.w.bits, 0.U(offsetBits.W)), io.w.fire)
     val rAddr = RegEnable(Cat(io.r.req.bits.pfAddr, 0.U(offsetBits.W)), io.r.req.fire)
-    val rData = Wire(cmTableEntry())
 
-    val readcmTable = io.w.valid
-    val writecmTable = RegNext(io.w.valid)
-    // s1: read cmTable
-    cmTable.io.r.req.valid := readcmTable
-    cmTable.io.r.req.bits.setIdx := idx(wAddr)
-    rData := cmTable.io.r.resp.data(0)
+    val wvalid = io.w.valid
+    val rvalid = io.r.req.valid
+    val hasinvalid = table.exists(e => !e.valid)
+    val invalidIdx = table.indexWhere(e => !e.valid)
+    val maxlruIdx = table.indexWhere(e => e.lru === (cmTableEntries - 1).U)
+    val hasMatch = table.exists(e => e.valid && sameHighAddress(e.addressHighBits, tag(rAddr)))
 
-    // s2: write cmTable and write missHotTable
-    cmTable.io.w.req.valid := io.w.valid && !io.r.req.valid
-    cmTable.io.w.req.bits.setIdx := idx(wAddr)
-    cmTable.io.w.req.bits.data(0).valid := true.B
-    cmTable.io.w.req.bits.data(0).addressHighBits := tag(wAddr)
-    cmTable.io.w.req.bits.data(0).missTime := Mux(rData.addressHighBits === tag(wAddr), rData.missTime + 1.U, 0.U)
+    when(wvalid && hasinvalid) {
+      table(invalidIdx).valid := true.B
+      table(invalidIdx).addressHighBits := tag(wAddr)
+      updatelru(invalidIdx)
+    }
 
-    var setMissTimeThreshold = Constantin.createRecord("MissTimeThreshold", missTimeThreshold)
-    val writeHotMissTable = rData.missTime >= setMissTimeThreshold
-    missHotTable.io.w.req.valid := writeHotMissTable
-    missHotTable.io.w.req.bits.setIdx := idx(wAddr)
-    missHotTable.io.w.req.bits.data(0).valid := true.B
-    missHotTable.io.w.req.bits.data(0).addressHighBits := rData.addressHighBits
-    
-    // read missHotTable when io.r.req.valid
-    val rDataMH = Wire(missHotTableEntry)
-    missHotTable.io.r.req.valid := io.r.req.valid && !missHotTable.io.w.req.valid
-    missHotTable.io.r.req.bits.setIdx := idx(rAddr)
-    rDataMH := missHotTable.io.r.resp.data(0)
-    
-    // assert(!RegNext(io.w.fire && io.r.req.fire), "single port SRAM should not read and write at the same time")
+    when(wvalid && !hasinvalid) {
+      table(maxlruIdx).valid := true.B
+      table(maxlruIdx).addressHighBits := tag(wAddr)
+      updatelru(maxlruIdx)
+    }
 
-    io.w.ready := cmTable.io.w.req.ready
+    io.w.ready := true.B
     io.r.req.ready := true.B
 
-    io.r.resp.valid := RegNext(missHotTable.io.r.req.fire)
-    io.r.resp.bits.hit := rDataMH.valid && rDataMH.addressHighBits === RegNext(tag(rAddr))
-
-    XSPerfAccumulate("misshotTable_resp_hit", io.r.resp.bits.hit)
-    XSPerfAccumulate("misshotTable_resp_fire", io.r.resp.fire)
-    XSPerfAccumulate("cmTable_hash_conflict", RegNext(cmTable.io.r.req.fire) && rData.addressHighBits =/= tag(wAddr))
+    when(rvalid && hasMatch) {
+      val matchIdx = table.indexWhere(e => e.valid && sameHighAddress(e.addressHighBits, tag(rAddr)))
+      updatereadlru(matchIdx)
+      io.r.resp.valid := true.B
+      io.r.resp.bits.hit := true.B
+    }.elsewhen(rvalid && !hasMatch) {
+      io.r.resp.valid := true.B
+      io.r.resp.bits.hit := false.B
+    }.otherwise{
+      io.r.resp.valid := false.B
+      io.r.resp.bits.hit := false.B
+    }
+    
+    XSPerfAccumulate("rcmTable_resp_hit", io.r.resp.bits.hit)
+    XSPerfAccumulate("rcmTable_resp_fire", io.r.resp.fire)
 }
 
 class PointerAddrQueue(implicit p: Parameters) extends ACDPModule{
@@ -609,7 +700,8 @@ class AdvanceContentDirecetdPrefetch(implicit p: Parameters) extends ACDPModule 
     val tlb_req = new L2ToL1TlbIO(nRespDups = 1)
   })
 
-  val rcmTable = Module(new RecentCacheMissTable)
+  // val rcmTable = Module(new RecentCacheMissTable)
+  val rcmTable = Module(new RCMTable)
   val pdRecognition = Module(new PointerDataRecognition)
 
   val pointerAddrValid = pdRecognition.io.pointerAddrValid

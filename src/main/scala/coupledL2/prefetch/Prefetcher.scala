@@ -124,6 +124,7 @@ class PrefetchReq(implicit p: Parameters) extends PrefetchBundle {
   def isACDP:Bool = pfSource === MemReqSource.Prefetch2L2ACDP.id.U ||
                     pfSource === MemReqSource.Prefetch2L2ACDP_d1.id.U ||
                     pfSource === MemReqSource.Prefetch2L2ACDP_d2.id.U
+  def isNEI:Bool = pfSource === MemReqSource.Prefetch2L2NEI.id.U
   def isSMS:Bool = pfSource === MemReqSource.Prefetch2L2SMS.id.U
   def isTP:Bool = pfSource === MemReqSource.Prefetch2L2TP.id.U
   def needAck:Bool = pfSource === MemReqSource.Prefetch2L2BOP.id.U || pfSource === MemReqSource.Prefetch2L2PBOP.id.U
@@ -147,6 +148,7 @@ class PrefetchResp(implicit p: Parameters) extends PrefetchBundle {
   def isACDP: Bool = pfSource ===MemReqSource.Prefetch2L2ACDP.id.U ||
               pfSource ===MemReqSource.Prefetch2L2ACDP_d1.id.U ||
               pfSource ===MemReqSource.Prefetch2L2ACDP_d2.id.U 
+  def isNEI: Bool = pfSource === MemReqSource.Prefetch2L2NEI.id.U
   def isSMS: Bool = pfSource === MemReqSource.Prefetch2L2SMS.id.U
   def isTP: Bool = pfSource === MemReqSource.Prefetch2L2TP.id.U
   def fromL2: Bool =
@@ -304,6 +306,14 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
     )))
   ) else None
 
+  val nei = if(hasNEI) Some(
+    Module(new NEIPrefetch()(p.alterPartial({
+      case L2ParamKey => p(L2ParamKey).copy(prefetch = Seq(NEIParameters()
+      ))
+    }
+    )))
+  ) else None 
+  
   val tp = if (hasTPPrefetcher) Some(Module(new TemporalPrefetch())) else None
   // prefetch from upper level
   val pfRcv = if (hasReceiver) Some(Module(new PrefetchReceiver())) else None
@@ -371,6 +381,14 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
     acdp.get.io.resp.valid := io.resp.valid && io.resp.bits.isACDP
     acdp.get.io.tlb_req <> io.tlb_req
     println(s"===========acdp=============")
+  }
+  if (hasNEI) {
+    nei.get.io.train <> io.train
+    nei.get.io.train.valid := io.train.valid && (io.train.bits.reqsource =/= MemReqSource.L1DataPrefetch.id.U)
+    nei.get.io.resp <> io.resp
+    nei.get.io.req.ready := true.B
+    nei.get.io.resp.valid := io.resp.valid && io.resp.bits.isNEI
+    println(s"===========nei=============")
   }
   // =================== Connection of all Prefetchers =====================
   /* prefetchers -> pftQueue -> pipe -> Slices.SinkA */

@@ -44,6 +44,7 @@ object PfSource extends Enumeration {
   val ACDP    = Value("ACDP")
   val ACDP_d1 = Value("ACDP_d1")
   val ACDP_d2 = Value("ACDP_d2")
+  val NEI     = Value("NEI")
   val Stream  = Value("Stream")
   val Stride  = Value("Stride")
   val TP      = Value("TP")

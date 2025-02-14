@@ -87,6 +87,7 @@ trait HasCoupledL2Parameters {
   def prefetchOpt = if(prefetchers.nonEmpty) Some(true) else None
   def hasBOP = prefetchers.exists(_.isInstanceOf[BOPParameters])
   def hasACDP = prefetchers.exists(_.isInstanceOf[ACDPParameters])
+  def hasNEI = prefetchers.exists(_.isInstanceOf[NEIParameters])
   def hasReceiver = prefetchers.exists(_.isInstanceOf[PrefetchReceiverParams])
   def hasTPPrefetcher = prefetchers.exists(_.isInstanceOf[TPParameters])
   def hasPrefetchBit = prefetchers.exists(_.hasPrefetchBit) // !! TODO.test this
